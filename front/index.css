@@ -1,0 +1,323 @@
+* {
+    box-sizing: border-box;
+}
+
+body {
+    margin: 0;
+    min-height: 100vh;
+    font-family: "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    background: #e2e8f0;
+    color: #0f172a;
+}
+
+.header {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 60px;
+    display: flex;
+    align-items: center;
+    padding: 0 24px;
+    background: rgba(255, 255, 255, 0.88);
+    color: #111827;
+    backdrop-filter: blur(12px);
+    box-shadow: 0 8px 20px rgba(15, 23, 42, 0.12);
+    z-index: 1000;
+}
+
+.header h2 {
+    margin: 0;
+    font-size: 1.25rem;
+    letter-spacing: 0.02em;
+}
+
+.header h4 {
+    margin-left: auto;
+}
+
+.header a {
+    color: #74d7ff;
+}
+
+/* 卡片容器 */
+.container {
+    position: absolute;
+    top: 60px;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    background: #e2e8f0;
+    overflow: hidden;
+}
+
+.container>div {
+    position: absolute;
+    width: 100%;
+    height: 100%;
+    overflow: auto;
+    inset: 0;
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+    transform: translateY(12px) scale(0.98);
+    transition: opacity .28s ease, transform .28s ease, visibility 0s linear .28s;
+}
+
+.container>div.active {
+    opacity: 1;
+    visibility: visible;
+    pointer-events: auto;
+    transform: translateY(0) scale(1);
+    transition: opacity .28s ease, transform .28s ease, visibility 0s;
+    display: block;
+}
+
+.container .init.active,
+.container .loading.active {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+}
+
+/* 卡片-加载中 */
+.loading h1 {
+    margin: 10px;
+}
+
+/* 卡片-初始化 */
+.init-container {
+    width: 50%;
+    min-width: 300px;
+    max-width: 600px;
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+}
+
+.init-container>* {
+    margin-top: 10px;
+}
+
+.init-cell h4 {
+    margin: 0;
+    margin-left: 10px;
+    width: 100%;
+}
+
+.init-cell li {
+    list-style-position: outside;
+    margin: 0 0 0 1.2em;
+    padding: 0;
+}
+
+.init-cell input {
+    width: 100%;
+    padding: 10px;
+    height: 40px;
+    border-radius: 10px;
+    border: 1px solid #0f172a3b;
+    color: #0f172a;
+    font-size: 1rem;
+    outline: none;
+    transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.init input.error {
+    background-color: #ffe0e0;
+}
+
+.init input:focus {
+    background-color: #e0f7ff;
+}
+
+.init button {
+    display: inline-flex;
+    justify-content: center;
+    align-items: center;
+    width: 100%;
+    height: 40px;
+    border: none;
+    border-radius: 10px;
+    background: #2563eb;
+    color: #ffffff;
+    font-size: 1rem;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.init button:focus,
+.init button:hover {
+    background-color: #25d1eb;
+    border-color: #25d1eb;
+}
+
+.init button:disabled {
+    background-color: #888;
+    border-color: #888;
+}
+
+/* 卡片-列表 */
+.container .list {
+    padding: 10px;
+    background-color: #2563eb;
+}
+
+.list-header {
+    margin-top: 10px;
+    display: flex;
+    background-color: #a00;
+}
+
+.list-header>*{
+    width: 100%;
+}
+
+.list-header h3 {
+    margin: 0;
+}
+
+.show-type {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 5px;
+}
+
+.show-type p {
+    margin: 0;
+}
+
+.show-type svg {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    color: #999999;
+    background-color: transparent;
+    border-radius: 6px;
+    padding: 3px;
+    box-sizing: content-box;
+    cursor: pointer;
+    transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+    transform-origin: center;
+}
+
+.show-type svg:hover {
+    color: #1890ff;
+    background-color: #e6f7ff;
+    transform: scale(1.15);
+}
+
+.show-type svg.active,
+.show-type svg:active {
+    transform: scale(1.05);
+    background-color: #bae7ff;
+}
+
+
+/* 卡片-信息显示 */
+.container .show {
+    min-height: 200px;
+}
+
+/* 通知相关 */
+.note-container {
+    position: fixed;
+    top: 60px;
+    right: 20px;
+    max-width: 400px;
+    z-index: 1000;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    pointer-events: none;
+}
+
+.note {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 16px;
+    background-color: #f3feff;
+    border: 1px solid #051b1e26;
+    border-radius: 6px;
+    box-shadow: 0 4px 12px #051b1e1a;
+    font-size: 0.9rem;
+    animation: slideIn 0.3s ease-out;
+    pointer-events: all;
+    transition: opacity 0.3s ease, transform 0.3s ease;
+}
+
+@keyframes slideIn {
+    from {
+        opacity: 0;
+        transform: translateX(400px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateX(0);
+    }
+}
+
+@keyframes slideOut {
+    from {
+        opacity: 1;
+        transform: translateX(0);
+    }
+
+    to {
+        opacity: 0;
+        transform: translateX(400px);
+    }
+}
+
+.note.note-info {
+    border-left: 4px solid #60A5FA;
+    color: #369;
+}
+
+.note.note-warn {
+    border-left: 4px solid #FBBF24;
+    color: #a70;
+}
+
+.note.note-error {
+    border-left: 4px solid #F87171;
+    color: #a00;
+}
+
+.note-text {
+    flex: 1;
+    line-height: 1.4;
+}
+
+.note-close {
+    background: none;
+    border: none;
+    font-size: 1.2rem;
+    cursor: pointer;
+    color: currentColor;
+    opacity: 0.6;
+    padding: 0;
+    margin: 0;
+    width: 24px;
+    height: 24px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    transition: opacity 0.2s ease;
+}
+
+.note-close:hover {
+    opacity: 1;
+}
+
+.note.removing {
+    animation: slideOut 0.3s ease-out forwards;
+}

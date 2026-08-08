@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="./index.css">
+    <title>Factory Management Page</title>
+</head>
+
+<body>
+    <!-- 通知容器 -->
+    <div class="note-container" id="noteDiv"></div>
+    <!-- 表头 -->
+    <div class="header">
+        <h2>Factory Management Page</h2>
+        <h4>当前数据报告时间: <a id="report-time">N/A</a></h4>
+    </div>
+    <!-- 卡片容器 -->
+    <div class="container">
+
+        <div class="loading active">
+            <h1>加载中...</h1>
+        </div>
+
+        <div class="init">
+            <div class="init-container">
+                <div class="init-cell">
+                    <h4>服务器地址:</h4>
+                    <input id="init-url" type="text" placeholder="输入...">
+                </div>
+                <div class="init-cell">
+                    <h4>操作密钥(可选):</h4>
+                    <input id="init-pwd" type="password" placeholder="输入...">
+                </div>
+                <button id="init-btn">确定</button>
+                <div class="init-cell">
+                    <li>若不输入密钥则进入演示模式</li>
+                    <li>服务器地址结尾不需要带'/'</li>
+                    <li>服务器地址可通过url参数 'server' 指定，若同时存在 'auto' 参数时则会自动跳过操作密钥输入</li>
+                </div>
+            </div>
+        </div>
+
+        <div class="list">
+            <div class="list-header">
+                <h3>模块列表:</h3>
+                <div class="show-type">
+                    <p>多模块显示模式:</p>
+                    <svg id="showTypeBtn1" class="active" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 25 25"
+                        width="25" height="25" fill="none" stroke="currentColor" stroke-width="1.8">
+                        <rect x="2.5" y="2.5" width="20" height="20" rx="3" />
+                    </svg>
+                    <svg id="showTypeBtn2" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 25 25" width="25" height="25"
+                        fill="none" stroke="currentColor" stroke-width="1.8">
+                        <rect x="2.5" y="2.5" width="9" height="20" rx="2" />
+                        <rect x="13.5" y="2.5" width="9" height="20" rx="2" />
+                    </svg>
+                    <svg id="showTypeBtn3" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 25 25" width="25" height="25"
+                        fill="none" stroke="currentColor" stroke-width="1.8">
+                        <rect x="2.5" y="2.5" width="9" height="20" rx="2" />
+                        <rect x="13.5" y="2.5" width="9" height="9" rx="2" />
+                        <rect x="13.5" y="13.5" width="9" height="9" rx="2" />
+                    </svg>
+                    <svg id="showTypeBtn4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 25 25" width="25" height="25"
+                        fill="none" stroke="currentColor" stroke-width="1.8">
+                        <rect x="2.5" y="2.5" width="9" height="9" rx="2" />
+                        <rect x="13.5" y="2.5" width="9" height="9" rx="2" />
+                        <rect x="2.5" y="13.5" width="9" height="9" rx="2" />
+                        <rect x="13.5" y="13.5" width="9" height="9" rx="2" />
+                    </svg>
+                </div>
+            </div>
+            test
+        </div>
+
+        <div class="show">
+            <h1>test</h1>
+        </div>
+
+    </div>
+    <script type="module" src="./index.js"></script>
+</body>
+
+</html>
