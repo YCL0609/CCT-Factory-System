@@ -81,7 +81,7 @@ export class serverCtrl {
             const data = await response.json();
             if (typeof data.data !== 'object') {
                 this.#errorCount++;
-                showNote('error', '服务器数据返回了无效数据');
+                showNote('error', '服务器数据返回了无效的响应数据');
                 return;
             }
 
