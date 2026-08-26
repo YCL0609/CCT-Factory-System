@@ -8,12 +8,7 @@ const showBtnE = document.getElementById("show-btn");
 const cellInit = document.querySelector(".init");
 const cellList = document.querySelector(".list");
 const cellShow = document.querySelector(".show");
-const showNodes = [
-    document.getElementById("showNode1"),
-    document.getElementById("showNode2"),
-    document.getElementById("showNode3"),
-    document.getElementById("showNode4"),
-];
+let dataLoop;
 let cellSelected = 0;
 let moduleList = {};
 let activeList = [];
@@ -45,6 +40,11 @@ async function getBasicInfo() {
     try {
         ctrlObj = new serverCtrl(url, pwd)
         switchCard(2);
+
+        // 启动数据获取循环 (每15s获取一次)
+        await getData();
+        dataLoop = setInterval(getData, 15000);
+
         return true;
     } catch (e) {
         showNote('error', e.message);
@@ -54,6 +54,47 @@ async function getBasicInfo() {
     }
 }
 
+// 显示到屏幕函数
+async function dataToScreen(isFirst = false) {
+    const cardE = document.querySelector('.show');
+
+    // 获取DOM节点副本
+    const mainPoint = cardE.cloneNode(true);
+    const divList = [
+        mainPoint.querySelector('#showNode1'),
+        mainPoint.querySelector('#showNode2'),
+        mainPoint.querySelector('#showNode3'),
+        mainPoint.querySelector('#showNode4'),
+    ];
+
+    // 构建任务列表
+    const tasks = activeList.map((v, i) => {
+        // 预防边界情况
+        const target = divList[i];
+        if (!target) return Promise.resolve();
+
+        // 确保处理函数存在
+        if (typeof moduleList[v]?.divUpdate !== 'function') return Promise.resolve();
+
+        return Promise.race([
+            Promise.resolve().then(() => moduleList[v].divUpdate(target, isFirst)),
+            new Promise((_, reject) => setTimeout(() => reject(new Error('函数执行超时')), 5000)),
+        ]);
+    });
+
+    // 运行并处理结果
+    const results = await Promise.allSettled(tasks);
+    results.forEach((result, i) => {
+        if (result.status === 'rejected') {
+            const v = activeList[i];
+            console.error(result.reason);
+            showNote('warn', `实例 [${v}] 执行 divUpdate 失败: ${result.reason?.message || result.reason}`);
+        }
+    });
+
+    // 一次性插入所有修改
+    cardE.replaceChildren(...mainPoint.children);
+}
 // 获取并处理数据
 async function getData() {
     if (!ctrlObj) return;
@@ -65,7 +106,7 @@ async function getData() {
     // 处理时间字段
     let reportTime = "N/A"
     if (data.report_time) {
-        const time = new Date(data.report_time);
+        const time = new Date(Number(data.report_time));
         if (!isNaN(time)) {
             const hh = String(time.getHours()).padStart(2, '0');
             const mm = String(time.getMinutes()).padStart(2, '0');
@@ -87,15 +128,7 @@ async function getData() {
     await Promise.all(promises);
 
     // 进行数据更新
-    activeList.forEach((v, i) => {
-        try {
-            if (!showNodes[i]) return;
-            await moduleList[v]?.divUpdate?.(showNodes[i], false);
-        } catch (e) {
-            console.error(e);
-            showNote('warn', `实例 [${v}] 执行 divUpdate 失败: ${e?.message || e}`);
-        }
-    });
+    await dataToScreen();
 }
 
 // 显示选择的模块
@@ -118,18 +151,12 @@ async function showCards() {
         }
     }
     // 自动排序
-    activeList = Object.values(Object.keys(nameList));
+    activeList = Object.entries(nameList)
+        .sort(([keyA], [keyB]) => Number(keyA) - Number(keyB)) // 按数字大小升序排列 Key
+        .map(([, value]) => value); // 只保留 Value
 
     // 进行数据更新
-    activeList.forEach((v, i) => {
-        try {
-            if (!showNodes[i]) return;
-            await moduleList[v]?.divUpdate?.(showNodes[i], true);
-        } catch (e) {
-            console.error(e);
-            showNote('warn', `实例 [${v}] 执行 divUpdate 失败: ${e?.message || e}`);
-        }
-    });
+    await dataToScreen(true);
 
     switchCard(3);
 }
@@ -137,7 +164,6 @@ async function showCards() {
 // 页面初始化函数
 async function init() {
     const startTime = performance.now();
-    const showListE = document.querySelector(".show-list");
 
     // url参数解析
     const params = getUrlParams();
@@ -172,6 +198,7 @@ async function init() {
 
     // 循环加载所有模块
     let loadCount = 0;
+    const fragment = document.createDocumentFragment();
     for (const cell of list) {
         if (typeof cell !== 'object') {
             showNote('warn', '有模块配置不合规(已跳过)');
@@ -193,7 +220,7 @@ async function init() {
             // 加载模块
             const module = await import(`./module/${cell.name}/index.js`);
             const mClass = new module.default();
-            if (typeof mClass.init === 'function') mClass.init();
+            if (typeof mClass.init === 'function') await mClass.init();
             moduleList[cellName.toLowerCase()] = mClass;
 
             // 加载额外css
@@ -232,7 +259,7 @@ async function init() {
             }
             div.appendChild(h4);
             div.appendChild(a);
-            showListE.appendChild(div);
+            fragment.appendChild(div);
 
             loadCount++;
         } catch (e) {
@@ -242,8 +269,9 @@ async function init() {
     }
 
     if (loadCount > 0) {
-        // 隐藏无模块提示
-        document.getElementById("showListNote").style.display = "none";
+        // 添加到页面
+        const showList = document.querySelector('.show-list');
+        showList.replaceChildren(fragment);
 
         // 隐藏不需要的模式选择按钮
         const overflow = 4 - loadCount;
@@ -253,10 +281,6 @@ async function init() {
             }
         }
     }
-
-    // 启动数据获取循环 (每15s获取一次)
-    await getData();
-    setInterval(getData, 15000);
 
     // 提示信息处理
     const totalTime = (performance.now() - startTime).toFixed(2);
@@ -305,4 +329,4 @@ if (!isMobile()) {
 }
 
 //  页面加载事件
-document.addEventListener('DOMContentLoaded', init);
+document.addEventListener('DOMContentLoaded', () => init().catch(e => showNote('error', '初始化失败: ' + e?.message || e, true)));

@@ -40,7 +40,7 @@ body {
     color: #74d7ff;
 }
 
-/* 卡片容器 */
+/******************** 卡片容器 ********************/
 .container {
     position: absolute;
     top: 60px;
@@ -78,7 +78,7 @@ body {
 }
 
 
-/* 卡片-加载中 */
+/******************** 卡片-加载中 ********************/
 .loading {
     justify-content: center;
 }
@@ -87,7 +87,7 @@ body {
     margin: 10px;
 }
 
-/* 卡片-初始化 */
+/******************** 卡片-初始化 ********************/
 .init {
     justify-content: center;
 }
@@ -164,7 +164,7 @@ body {
     cursor: not-allowed;
 }
 
-/* 卡片-列表 */
+/******************** 卡片-列表 ********************/
 .container .list {
     padding: 10px;
     flex-direction: column;
@@ -308,8 +308,8 @@ body {
     margin-left: auto;
 }
 
-/* 卡片-信息显示 */
-.show h4 {
+/******************** 卡片-信息显示 ********************/
+.show #showTypeErr {
     width: 100%;
     text-align: center;
 }
@@ -326,8 +326,8 @@ body {
     scrollbar-color: #3367f6 #f1f5f94e;
 }
 
-/** 类型1 **/
-.show[data-type="1"] h4 {
+/********** 类型1 **********/
+.show[data-type="1"] #showTypeErr {
     display: none;
 }
 
@@ -338,12 +338,12 @@ body {
     height: 100%;
 }
 
-/** 类型2 **/
+/********** 类型2 **********/
 .show[data-type="2"] {
     display: flex;
 }
 
-.show[data-type="2"] h4 {
+.show[data-type="2"] #showTypeErr {
     display: none;
 }
 
@@ -360,12 +360,12 @@ body {
     height: 100%;
 }
 
-/** 类型3 **/
+/********** 类型3 **********/
 .show[data-type="3"] {
     display: flex;
 }
 
-.show[data-type="3"] h4 {
+.show[data-type="3"] #showTypeErr {
     display: none;
 }
 
@@ -403,8 +403,8 @@ body {
     height: 500%;
 }
 
-/** 类型4 **/
-.show[data-type="4"] h4 {
+/********** 类型4 **********/
+.show[data-type="4"] #showTypeErr {
     display: none;
 }
 
@@ -429,7 +429,7 @@ body {
     border-bottom: solid 2px #000;
 }
 
-/* 通知相关 */
+/******************* 通知相关 *******************/
 .note-container {
     position: fixed;
     top: 60px;
@@ -527,7 +527,7 @@ body {
     animation: slideOut 0.3s ease-out forwards;
 }
 
-/* 手机端适配 */
+/******************** 手机端适配 ********************/
 @media (max-width: 767px) {
     .header {
         flex-direction: column;

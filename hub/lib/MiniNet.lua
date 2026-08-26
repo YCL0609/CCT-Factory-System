@@ -233,7 +233,7 @@ function MiniNet:startTasks(tasks)
             self._taskList.queue[t.mid] = {
                 onChange= false,
                 rawCount = t.rawCount,
-                callback = t.callback or self._emptyFunc,
+                callback = type(t.callback) == "function" and t.callback or self._emptyFunc,
                 count = t.rawCount + 1 -- 添加一次超时计数来进行初始化容错
             }
             self._taskList.count = self._taskList.count + 1

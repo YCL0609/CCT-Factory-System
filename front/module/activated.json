@@ -3,17 +3,10 @@
         "name": "AEMonitor",
         "desc": "aaaaaaaaaaaaa",
         "css": true
-    },{
-        "name": "AEMonitor",
-        "desc": "aaaaaaaaaaaaa",
-        "css": true
-    },{
-        "name": "AEMonitor",
-        "desc": "aaaaaaaaaaaaa",
-        "css": true
-    },{
-        "name": "AEMonitor",
-        "desc": "aaaaaaaaaaaaa",
-        "css": true
+    },
+    {
+        "name": "UnitStatus",
+        "desc": "bbbbbbbbbbbb",
+        "css": false
     }
 ]

@@ -54,11 +54,12 @@ function init:new(initCfg)
         LogObj = log:new(noLog and 9 or 1)
     end
 
-    ---- 配置解析 ----
+    -- 配置解析
     local settings = { debugMode = debugMode }
-    settings.noReboot = not not initCfg.noReboot -- 阻止系统重启
-    settings.noTimer = not not initCfg.noTimer   -- 计时器禁用配置
-    settings.noLog = not not initCfg.noLog       -- 日志禁用设置
+    settings.noTerminate = not not initCfg.noTerminate -- 忽略终止事件
+    settings.noReboot = not not initCfg.noReboot       -- 阻止系统重启
+    settings.noTimer = not not initCfg.noTimer         -- 计时器禁用配置
+    settings.noLog = not not initCfg.noLog             -- 日志禁用设置
     -- 轮询间隔配置
     if type(initCfg.timerInterval) == "number" and initCfg.timerInterval > 0 then
         settings.timerInterval = math.floor(initCfg.timerInterval)
@@ -120,9 +121,8 @@ function init:new(initCfg)
     end
     local loadTime = os.epoch("utc") - loadStartTime
 
-    ---- 后处理配置 ----
-    -- poll事件列表为空时禁用轮询计时器
-    if #obj._event.poll == 0 then obj._settings.noTimer = true end
+    -- 后处理配置
+    if #obj._event.poll == 0 then obj._settings.noTimer = true end -- poll事件列表为空时禁用轮询计时器
     if bit32.btest(settings.debugMode, obj.DEBUGMASK[4]) then
         -- 网络事件列表为空或调试位被设置时禁用网络
         obj._settings.noNet = true
@@ -152,16 +152,23 @@ end
 
 -- 调试模式各位置掩码
 init.DEBUGMASK = {
-    [0] = 0x01, -- 低位第0位, 是否开启调试模式
-    [1] = 0x02, -- 低位第1位, 启动调试shell
-    [2] = 0x04, -- 低位第2位, 强制禁用事件处理并将事件队列挂载到全局
-    [3] = 0x08, -- 低位第3位, 强制禁用屏幕点击事件
-    [4] = 0x10, -- 低位第4位, 强制禁用网络事件
-    [5] = 0x20, -- 低位第5位，强制禁用自定义事件
-    [6] = 0x40, -- 低位第6位, 保留位用于各单元自定义
-    [7] = 0x80
+    [0]  = 0x01,   -- 低位第0位, 是否开启调试模式
+    [1]  = 0x02,   -- 低位第1位, 启动调试shell
+    [2]  = 0x04,   -- 低位第2位, 强制禁用事件处理
+    [3]  = 0x08,   -- 低位第3位, 强制禁用屏幕点击事件
+    [4]  = 0x10,   -- 低位第4位, 强制禁用网络事件
+    [5]  = 0x20,   -- 低位第5位，强制禁用自定义事件
+    [6]  = 0x40,   -- 低位第6位, 强制禁用重启逻辑
+    [7]  = 0x80,   -- 低位第7位, 强制禁用退出时清理屏幕
+    [8]  = 0x0100, -- 高位第0位, 将事件队列挂载到全局
+    [9]  = 0x0200, -- 高位第1位, 主循环正常终止时挂起
+    [10] = 0x0400, -- 高位第2位, 退出时不清理屏幕
+    [11] = 0x0800, -- 高位第3位, 退出时不关闭网络连接
+    [12] = 0x1000,
+    [13] = 0x2000,
+    [14] = 0x4000,
+    [15] = 0x8000,
 }
-
 --- 错误信息id映射表
 init.ERRORTEXT = {
     [1] = "Module '%s' failed to load: %s",
@@ -238,25 +245,41 @@ function init:_loadModules(name)
 end
 
 --- 清理并退出
-function init:exitClean()
+function init:_exitClean()
     self._liblog:info("System shutting down ...")
+
     -- 关闭无线连接
-    self._libnet:close()
+    if bit32.btest(self._settings.debugMode, self.DEBUGMASK[11]) then
+        -- 高位第2位, 退出时不清理屏幕
+        self._liblog:debug("Screen cleaning has been blocked!")
+    else
+        self._libnet:close()
+    end
+
     -- 清理屏幕
-    for _, monitor in ipairs({ peripheral.find("monitor") }) do
-        monitor.setBackgroundColor(colors.black)
-        monitor.setTextColor(colors.white)
-        monitor.clear()
+    if bit32.btest(self._settings.debugMode, self.DEBUGMASK[10]) then
+        -- 高位第2位, 退出时不清理屏幕
+        self._liblog:debug("Screen cleaning has been blocked!")
+    else
+        for _, monitor in ipairs({ peripheral.find("monitor") }) do
+            monitor.setBackgroundColor(colors.black)
+            monitor.setTextColor(colors.white)
+            monitor.clear()
+        end
     end
 end
 
 --- 启动主循环
 function init:doMainLoop()
+    -- 是否处于关闭流程中
+    local inClose = false
     -- 初始化任务队列
     local eventQueue = TaskQueue:new()
-    -- 低位第2位, (1/2)将事件队列挂载到全局
-    if bit32.btest(self._settings.debugMode, self.DEBUGMASK[2]) then
+
+    -- 高位第0位, 将事件队列挂载到全局
+    if bit32.btest(self._settings.debugMode, self.DEBUGMASK[8]) then
         _G.HubeventQueue = eventQueue
+        self._liblog:debug("The event queue has been mounted to global at _G.HubeventQueue")
     end
     -- 低位第3位，强制禁用屏幕点击事件
     local noMonitor = bit32.btest(self._settings.debugMode, self.DEBUGMASK[3])
@@ -267,38 +290,53 @@ function init:doMainLoop()
     local function monitor()
         while true do
             local event = { os.pullEventRaw() }
-            if self._event[event[1]] then
+            if inClose then
+                break
+            elseif self._event[event[1]] then
                 eventQueue:push(event)
                 os.queueEvent("newTask")
-            elseif event[1] == "terminate" then
-                return self:exitClean()
-            elseif event[1] == "reboot" then
-                self:exitClean()
-                if not self._settings.noReboot then
-                    os.reboot()
+            elseif event[1] == "terminate" and not self._settings.noTerminate then
+                inClose = true
+                self:_exitClean()
+                -- 高位第1位, 主循环正常终止时挂起
+                if bit32.btest(self._settings.debugMode, self.DEBUGMASK[9]) then
+                    break
                 end
+                return
+            elseif event[1] == "reboot" then
+                inClose = true
+                self:_exitClean()
+                if
+                    self._settings.noReboot
+                    or bit32.btest(self._settings.debugMode, self.DEBUGMASK[9]) -- 高位第1位, 主循环正常终止时挂起
+                then
+                    break
+                end
+                os.reboot()
             end
         end
+
+        while true do os.pullEvent("Imashino Misaki") end -- 监听不存在的事件来无限等待
     end
 
     -- 任务处理函数
     local function handler()
+        -- 低位第2位, 强制禁用事件处理
         if bit32.btest(self._settings.debugMode, self.DEBUGMASK[2]) then
-            -- 低位第2位, (2/2)强制禁用事件处理
             self._liblog:debug("The main event handling loop has been disabled")
-            while true do -- 监听不存在的事件来无限等待
-                os.pullEvent("Imashino Misaki")
-            end
         else
             -- 错误事件计数
             local errEventCount = 0
 
             while true do
                 os.pullEvent("newTask")
+                if inClose then break end
 
+                -- 损坏事件检测
                 if errEventCount > 10 then
+                    inClose = true
                     self._liblog:fatal("Event damage threshold exceeded (", errEventCount,
-                        "> 10 ), system unstable! Forced shutdown executed ...")
+                        "> 10 ), The system is unstable and has been forced to shut down ...")
                 end
 
                 -- 轮询取任务并生成事件函数集合
@@ -343,23 +381,23 @@ function init:doMainLoop()
                 if #tasks ~= 0 then parallel.waitForAll(table.unpack(tasks)) end
             end
         end
+
+        while true do os.pullEvent("Sumi Serina") end -- 监听不存在的事件来无限等待
     end
 
     -- 计时器函数
     local function timmer()
         if self._settings.noTimer then
             self._liblog:info("The polling timer is disabled")
-            -- 监听不存在的事件来无限等待
-            while true do
-                os.pullEvent("Sumi Serina")
-            end
         else
-            -- 每经过指定时间触发一次poll事件
             while true do
                 os.sleep(self._settings.timerInterval)
+                if inClose then break end
                 os.queueEvent("poll")
             end
         end
+
+        while true do os.pullEvent("Tendou Arisu") end -- 监听不存在的事件来无限等待
     end
 
     -- 调试shell函数
@@ -371,10 +409,7 @@ function init:doMainLoop()
             self._liblog:debug("Debug shell terminated")
         end
 
-        -- 监听不存在的事件来无限等待
-        while true do
-            os.pullEvent("Tendou Arisu")
-        end
+        while true do os.pullEvent("Tendou Kei") end -- 监听不存在的事件来无限等待
     end
 
     return parallel.waitForAny(monitor, handler, timmer, debugShell)

@@ -13,10 +13,10 @@ EOF
     exit 1
 }
 
+SCRIPT_DIR=$(dirname "$(readlink -f "$0")")
 TARGET_DIR=""
 CCT_KEY=""
 FRONT_KEY=""
-SOURCE_FILE="./report.php"
 
 # 解析命令行参数
 while getopts "d:c:f:s:h" opt; do
@@ -34,12 +34,6 @@ done
 if [ -z "$TARGET_DIR" ]; then
     echo "错误: 必须指定目标目录 (-d)" >&2
     usage
-fi
-
-# 检查源文件是否存在
-if [ ! -f "$SOURCE_FILE" ]; then
-    echo "错误: 源文件 '$SOURCE_FILE' 不存在" >&2
-    exit 1
 fi
 
 # 生成随机密钥的函数
@@ -94,9 +88,10 @@ deploy_file() {
     echo "已部署: $dst"
 }
 
-# 部署两个目标文件
-deploy_file "$SOURCE_FILE" "${TARGET_DIR}/report.php" "$CCT_KEY"
-deploy_file "$SOURCE_FILE" "${TARGET_DIR}/control.php" "$FRONT_KEY"
+# 部署目标文件
+deploy_file "${SCRIPT_DIR}/report.php" "${TARGET_DIR}/report.php" "$CCT_KEY"
+deploy_file "${SCRIPT_DIR}/control.php" "${TARGET_DIR}/control.php" "$FRONT_KEY"
+deploy_file "${SCRIPT_DIR}/bootstrap.php" "${TARGET_DIR}/bootstrap.php" ""
 
 # 创建软链接
 LINK_TARGET="/dev/shm/CCT-Factory-Server/latest_report.json"

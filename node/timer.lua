@@ -10,13 +10,17 @@ local monitors = { peripheral.find("monitor") }
 --- }
 local staticCfg = {}
 
+--- 外部事件映射表
+--- @type table<string,function>
+local eventMap = {}
+
 --- 执行状态切换函数
 --- @type fun(runData:table, hardDisabled:boolean)
-local doControl
+local doControl = function() end
 
 --- 执行恢复逻辑函数
 --- @type fun(runData:table)
-local doRecovery
+local doRecovery = function() end
 
 -- 初始化默认外设
 local modem
@@ -26,6 +30,13 @@ for _, v in ipairs({ peripheral.find("modem") }) do
         break
     end
 end
+if not modem then
+    error("Unable to get the wireless modem instance", 2)
+end
+
+--- 执行告警控制事件
+--- @type fun(runData:table, tag: string, status: boolean)
+local doTrigger = function() end
 
 -- 硬禁用
 local hardDisabled = false
@@ -50,7 +61,6 @@ end
 --- @param isPing? boolean 是否为ping包
 --- @param mid? any 是否为ping包
 local function sendACK(isPing, mid)
-    if not modem then return end
     local statusId = runData.status and 4 or 5
     local disabled = runData.disabled or hardDisabled
     modem.transmit(staticCfg.serverId, staticCfg.serverId, {
@@ -147,15 +157,23 @@ local function eventJob()
                         sendACK(false, payload.mid)
                     end
                 end
+            elseif payload.code == 203 then -- 主机单元告警状态触发
+                if payload.tag == staticCfg.tag then
+                    doTrigger(runData, payload.data.tag, payload.data.status)
+                end
+            elseif type(eventMap["modem_message"]) == "function" then -- 自定义函数调用
+                eventMap["modem_message"](runData, event)
             end
 
             if needSave then saveConfig() end
         elseif eventName == "redstone" and sideMap[staticCfg.input] then
-            local currentInput = redstone.getInput(sideMap[staticCfg.input])
-            if hardDisabled ~= currentInput then
-                hardDisabled = currentInput
+            hardDisabled = sideMap[staticCfg.input] and redstone.getInput(sideMap[staticCfg.input]) or false
+            if hardDisabled ~= hardDisabled then
+                hardDisabled = hardDisabled
                 showStatus()
             end
+        elseif type(eventMap["modem_message"]) == "function" then -- 自定义函数调用
+            eventMap["modem_message"](runData, event)
         end
     end
 end
@@ -192,42 +210,59 @@ local function timerJob()
 end
 
 --- 配置校验与初始化
-local function configCheck()
+local function configGen()
+    -- 加载用户脚本
+    local ok, userdata = pcall(require, "user")
+    if not ok then error("User script load error!", 2) end
+    -- 基础配置段
+    if type(userdata.staticCfg) == "table" then
+        staticCfg = userdata.staticCfg
+    else
+        error("User script format error: 'staticCfg' not a table!", 2)
+    end
+    -- 控制函数
+    if type(userdata.doControl) == "function" then
+        doControl = userdata.doControl
+    else
+        error("User script format error 'doControl' not a function!", 2)
+    end
+    -- 恢复函数
+    if type(userdata.doRecovery) == "function" then
+        doRecovery = userdata.doRecovery
+    end
+    -- 告警处理函数
+    if type(userdata.doTrigger) == "function" then
+        doTrigger = userdata.doTrigger
+    end
+    -- 额外事件配置
+    if type(userdata.eventMap) == "table" then
+        eventMap = userdata.eventMap
+    end
+
+    -- 运行时配置校验
     runData.disabled = not not runData.disabled
     runData.serverOnline = not not runData.serverOnline
     runData.status = not not runData.status
     if type(runData.passedMin) ~= "number" or runData.passedMin < 0 then
         runData.passedMin = 0
     end
-end
 
--- 加载用户脚本
-local userdata = require("user")
-if
-    type(userdata.staticCfg) == "table"
-    and type(userdata.doControl) == "function"
-    and type(userdata.doRecovery) == "function"
-then
-    staticCfg = userdata.staticCfg
-    doControl = userdata.doControl
-    doRecovery = userdata.doRecovery
-else
-    error("User script format error!", 2)
-end
+    -- 硬件禁用逻辑
+    hardDisabled = sideMap[staticCfg.input] and redstone.getInput(sideMap[staticCfg.input]) or false
 
--- 配置输出
-print("Cell tag: " .. staticCfg.tag)
-print("Server ID: " .. staticCfg.serverId)
-print("Input side: " .. sideMap[staticCfg.input])
-print("Interval: " .. staticCfg.waitTime)
-term.setTextColor(colors.lightBlue)
-print("Computer ID: " .. os.getComputerID())
-term.setTextColor(colors.white)
+    -- 配置输出
+    print("Cell tag: " .. staticCfg.tag)
+    print("Server ID: " .. staticCfg.serverId)
+    print("Input side: " .. sideMap[staticCfg.input])
+    print("Interval: " .. staticCfg.waitTime)
+    term.setTextColor(colors.lightBlue)
+    print("Computer ID: " .. os.getComputerID())
+    term.setTextColor(colors.white)
+end
 
 -- 预启动
-hardDisabled = sideMap[staticCfg.input] and redstone.getInput(sideMap[staticCfg.input]) or false
-configCheck()
-if modem then modem.open(staticCfg.serverId) end
+configGen()
+modem.open(staticCfg.serverId)
 if runData.status then
     runData.status = false
     doRecovery(runData)

@@ -1,11 +1,29 @@
 local runData = settings.get("unit.rundata") or {}
 local localModem = peripheral.wrap("top")
 local pc = peripheral.find("computer")
+if not pc then error("No child computer detected", 2) end
 local pcNAKCount = 0
 
--- 默认配置
-local user = require("user")
-local staticCfg = type(user) == "table" and (user.staticCfg or {}) or {}
+--- 静态配置
+--- @type {
+---  tag: string,
+---  input: number,
+---  serverId: number,
+---  childInId: number,
+---  childOutId: number,
+--- }
+local staticCfg = {}
+
+--- 外部事件映射表
+--- @type table<string,function>
+local eventMap = {}
+
+-- 硬禁用
+local hardDisabled = false
+
+--- 执行告警控制事件
+--- @type fun(runData:table, tag: string, status: boolean)
+local doTrigger = function() end
 
 -- 初始化默认外设
 local modem
@@ -38,22 +56,12 @@ end
 --- @param mid? any 是否为ping包
 local function sendACK(isPing, mid)
     if not modem then return end
-    -- ID映射
-    local statusId
-    if pcNAKCount >= 2 then
-        statusId = 0
-    elseif runData.disabled then
-        statusId = 2
-    elseif runData.status then
-        statusId = 4
-    else
-        statusId = 3
-    end
-
+    local statusId = runData.status and 4 or 3
+    local disabled = runData.disabled or hardDisabled
     modem.transmit(staticCfg.serverId, staticCfg.serverId, {
         code = isPing and 193 or 103,
         mid = isPing and runData.mid or mid,
-        data = { status = statusId }
+        data = { status = disabled and 2 or statusId }
     })
 end
 
@@ -142,17 +150,25 @@ local function eventJob()
                             sendACK(false, payload.mid)
                         end
                     end
+                elseif payload.code == 203 then -- 主机单元告警状态触发
+                    if payload.tag == staticCfg.tag then
+                        doTrigger(runData, payload.data.tag, payload.data.status)
+                    end
+                elseif type(eventMap["modem_message"]) == "function" then -- 自定义函数调用
+                    eventMap["modem_message"](runData, event)
                 end
 
                 if needSave then saveConfig() end
             end
         elseif eventName == "redstone" and sideMap[staticCfg.input] then
-            local newStatus = redstone.getInput(sideMap[staticCfg.input])
+            hardDisabled = sideMap[staticCfg.input] and redstone.getInput(sideMap[staticCfg.input]) or false
             -- 仅当红石输入实际发生改变时才触发更新
-            if runData.disabled ~= newStatus then
-                runData.disabled = newStatus
+            if runData.disabled ~= hardDisabled then
+                runData.disabled = hardDisabled
                 showStatus()
             end
+        elseif type(eventMap["modem_message"]) == "function" then -- 自定义函数调用
+            eventMap["modem_message"](runData, event)
         end
     end
 end
@@ -171,25 +187,47 @@ end
 
 --- 配置校验
 local function configCheck()
+    -- 加载用户脚本
+    local ok, userdata = pcall(require, "user")
+    if not ok then error("User script load error!", 2) end
+    -- 基础配置段
+    if type(userdata.staticCfg) == "table" then
+        staticCfg = userdata.staticCfg
+    else
+        error("User script format error: 'staticCfg' not a table!", 2)
+    end
+    -- 告警处理函数
+    if type(userdata.doTrigger) == "function" then
+        doTrigger = userdata.doTrigger
+    end
+    -- 额外事件配置
+    if type(userdata.eventMap) == "table" then
+        eventMap = userdata.eventMap
+    end
+
+    -- 运行时配置校验
     runData.disabled = sideMap[staticCfg.input] and redstone.getInput(sideMap[staticCfg.input]) or false
     runData.serverOnline = not not runData.serverOnline
     runData.status = not not runData.status
-end
 
--- 配置输出
-print("Cell tag: " .. staticCfg.tag)
-print("Server ID: " .. staticCfg.serverId)
-print("Input side: " .. sideMap[staticCfg.input])
-print("Child in: " .. staticCfg.childInId)
-print("Child out: " .. staticCfg.childOutId)
-term.setTextColor(colors.lightBlue)
-print("Computer ID: " .. os.getComputerID())
-term.setTextColor(colors.white)
+    -- 硬件禁用逻辑
+    hardDisabled = sideMap[staticCfg.input] and redstone.getInput(sideMap[staticCfg.input]) or false
+
+    -- 配置输出
+    print("Cell tag: " .. staticCfg.tag)
+    print("Server ID: " .. staticCfg.serverId)
+    print("Input side: " .. sideMap[staticCfg.input])
+    print("Child in: " .. staticCfg.childInId)
+    print("Child out: " .. staticCfg.childOutId)
+    term.setTextColor(colors.lightBlue)
+    print("Computer ID: " .. os.getComputerID())
+    term.setTextColor(colors.white)
+end
 
 -- 预启动
 configCheck()
-if modem then modem.open(staticCfg.serverId) end
-if localModem then localModem.open(staticCfg.childOutId) end
+modem.open(staticCfg.serverId)
+localModem.open(staticCfg.childOutId)
 if not pc.isOn() then
     pc.turnOn()
     os.sleep(1)

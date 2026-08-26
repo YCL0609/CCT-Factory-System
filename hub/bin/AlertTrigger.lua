@@ -1,6 +1,6 @@
 --- @class ATThresholds 单个触发事件信息
 --- @field type "less"|"more" 触发类型
---- @field alertType 0|1|2 触发类型: 0 - 特别事件 1 - 单次触发事件 2 - 带恢复事件多次触发事件
+--- @field alertType 0|1|2 触发类型: 0 - 特别事件 1 - 阈值触发事件 2 - 带恢复阈值触发事件
 --- @field tag string 事件tag标签, 非特别事件时会忽略 (默认: "default")
 --- @field reverse boolean 是否反转发送状态
 --- @field value number 触发阈值
@@ -55,10 +55,23 @@ function AlertTrigger:new(config, libs)
                 if
                     type(val) == "table"
                     and (val.type == "less" or val.type == "more")
+                    and (val.alertType > -1 and val.alertType < 3)
                     and type(val.value) == "number"
                 then
+                    -- tag 处理
+                    if not val.tag then
+                        val.tag = "default"
+                    elseif type(val.tag) ~= "string" then
+                        local ok, stag = pcall(tostring, val.tag)
+                        if ok then
+                            val.tag = stag
+                        else
+                            val.tag = "default"
+                            libs.log:warn("[AlertTrigger] The trigger configuration index", j, "for unit", i,
+                                "has bad thresholds tag, use default tag instead!")
+                        end
+                    end
                     --- 初始化状态
-                    val.tag = val.tag or "default"
                     val.isAlerting = false
                     val.NCKCount = 0
                     val.isSending = false
@@ -97,11 +110,10 @@ AlertTrigger.ALERTCODEMAP = {
 
 -- 获取需要注册的事件配置
 function AlertTrigger:getEventList()
-    local events = #self._lists ~= 0 and { "ae2_cache_update" } or {}
     return {
         poll = false,
         monitor = false,
-        other = events
+        other = #self._lists ~= 0 and { "ae2_cache_update" } or {}
     }
 end
 
@@ -138,64 +150,61 @@ function AlertTrigger:epoll(data)
                 end
             end
 
-            -- 数值恢复时清空重试计数
-            if not isTriggered then
+            if not isTriggered then     -- 数值恢复时清空重试计数
                 t.NCKCount = 0
-            else
+            elseif not t.isSending then -- 发送数据包
+                local shouldSend = false
+
+                if
+                    t.NCKCount < 3           -- 前 3 次失败内直接发包
+                    or (t.NCKCount % 6) == 0 -- 超过 3 次失败后每触发6次尝试一次发包
+                then
+                    shouldSend = true
+                end
+
+                -- 阈值事件处理
+                if t.alertType == 1 and t.isAlerting then
+                    shouldSend = false
+                end
+
                 -- 发送数据包
-                if not t.isSending then
-                    local shouldSend = false
+                t.NCKCount = t.NCKCount + 1
+                if shouldSend then
+                    self._libs.log:info("[AlertTrigger] Sending", t.isAlerting, "signal for", item.cellTag, "trigger",
+                        t.tag, "amount", amount, "threshold", t.value)
 
-                    if t.NCKCount < 3 then            -- 前 3 次失败内直接发包
-                        shouldSend = true
-                    elseif (t.NCKCount % 6) == 0 then -- 超过 3 次失败后每触发6次尝试一次发包
-                        shouldSend = true
+                    -- 映射要发送的数据
+                    local status
+                    if t.reverse then
+                        status = t.isAlerting
+                    else
+                        status = not t.isAlerting
                     end
 
-                    -- 发送数据包
-                    t.NCKCount = t.NCKCount + 1
-                    if shouldSend then
-                        self._libs.log:info("[AlertTrigger] Sending", t.isAlerting, "signal for", item.cellTag, "trigger",
-                            t.tag, "amount", amount, "threshold", t.value)
-
-                        -- 映射要发送的数据
-                        local netCode = t.alertType == 0 and self.ALERTCODEMAP[0] or self.ALERTCODEMAP[item.cellType]
-                        local status
-                        if t.reverse then
-                            status = t.isAlerting
-                        else
-                            status = not t.isAlerting
-                        end
-
-                        t.isSending = true -- 加锁
-                        self._libs.net:send(
-                            item.cellTag,
-                            netCode,
-                            { tag = t.tag, status = status },
-                            2,
-                            function(_, code, isTimeout)
-                                t.isSending = false -- 解锁
-                                if isTimeout then
-                                    self._libs.log:error("[AlertTrigger] Failed to send judgment signal for",
-                                        item.cellTag, "trigger", t.tag)
-                                elseif code == 103 then -- ACK
-                                    t.NCKCount = 0
-                                    t.isAlerting = not t.isAlerting
-                                elseif code == 104 then -- NCK
-                                    if item.cellType == 1 then
-                                        t.NCKCount = t.NCKCount + 1
-                                    elseif item.cellType == 2 then
-                                        t.NCKCount = 0
-                                        t.isAlerting = not t.isAlerting
-                                        self._libs.log:warn(
-                                            "[AlertTrigger]", item.cellTag,
-                                            "report conflicts with hard disable logic, skipping.")
-                                    end
-                                end
-                                return false
+                    t.isSending = true -- 加锁
+                    self._libs.net:send(
+                        item.cellTag,
+                        self.ALERTCODEMAP[(t.alertType == 0) and 0 or item.cellType],
+                        { tag = t.tag, status = status },
+                        2,
+                        function(_, code, isTimeout)
+                            t.isSending = false -- 解锁
+                            if isTimeout then
+                                self._libs.log:error("[AlertTrigger] Failed to send judgment signal for",
+                                    item.cellTag, "trigger", t.tag)
+                            elseif code == 103 then -- ACK
+                                t.NCKCount = 0
+                                t.isAlerting = not t.isAlerting
+                            elseif code == 104 and item.cellType == 2 then -- NCK
+                                t.NCKCount = 0
+                                t.isAlerting = not t.isAlerting
+                                self._libs.log:warn("[AlertTrigger]", item.cellTag,
+                                    "report conflicts with hardware disable logic, skipping.")
                             end
-                        )
-                    end
+
+                            return false
+                        end
+                    )
                 end
             end
         end

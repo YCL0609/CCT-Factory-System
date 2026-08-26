@@ -42,7 +42,14 @@ if (is_file($ctrlPath)) {
     @rmdir($ctrlPath); // 尝试进行清理
 }
 
+// 服务器签名
+$stime = microtime(true) * 1000;
+$sbody = json_encode($ctrlJson, JSON_UNESCAPED_UNICODE);
+$ssha512 = hash_hmac('sha512', $sbody . $stime, SECRET_KEY);
+header("ssha512: " . $ssha512);
+header("stime: " . $stime);
+
 // 返回数据
 http_response_code(200);
-echo json_encode($ctrlJson, JSON_UNESCAPED_UNICODE);
+echo $sbody;
 exit();
