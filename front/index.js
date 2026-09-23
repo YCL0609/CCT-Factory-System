@@ -5,15 +5,16 @@ import { showNote } from "./lib/showNote.js";
 const reportTimeE = document.getElementById("report-time");
 const cellLoading = document.querySelector(".loading");
 const showBtnE = document.getElementById("show-btn");
+const backBtn = document.getElementById("back-btn");
 const cellInit = document.querySelector(".init");
 const cellList = document.querySelector(".list");
 const cellShow = document.querySelector(".show");
-let dataLoop;
 let cellSelected = 0;
 let moduleList = {};
 let activeList = [];
 let showType = 1;
 let stage = 0;
+let dataLoop;
 let ctrlObj;
 
 // 切换卡片函数
@@ -24,6 +25,8 @@ function switchCard(cardId) {
     [cellLoading, cellInit, cellList, cellShow].forEach((card, index) => {
         card.classList.toggle("active", index === cardId);
     });
+
+    backBtn.style.display = cardId > 1 ? "block" : "none"
 }
 
 // 密钥输入函数
@@ -56,6 +59,7 @@ async function getBasicInfo() {
 
 // 显示到屏幕函数
 async function dataToScreen(isFirst = false) {
+    if (stage != 3) return;
     const cardE = document.querySelector('.show');
 
     // 获取DOM节点副本
@@ -95,6 +99,7 @@ async function dataToScreen(isFirst = false) {
     // 一次性插入所有修改
     cardE.replaceChildren(...mainPoint.children);
 }
+
 // 获取并处理数据
 async function getData() {
     if (!ctrlObj) return;
@@ -147,6 +152,8 @@ async function showCards() {
             nameList[fallbackTime] = name;
             fallbackTime++;
         } else {
+            let t = time;
+            while (nameList[t]) t++;
             nameList[time] = name;
         }
     }
@@ -156,9 +163,8 @@ async function showCards() {
         .map(([, value]) => value); // 只保留 Value
 
     // 进行数据更新
-    await dataToScreen(true);
-
     switchCard(3);
+    await dataToScreen(true);
 }
 
 // 页面初始化函数
@@ -211,7 +217,8 @@ async function init() {
             showNote('warn', '有模块名称为空(已跳过)')
             continue;
         }
-        if (moduleList[cellName.toLowerCase()]) {
+        const minCellName = cellName.toLowerCase()
+        if (moduleList[minCellName]) {
             showNote('warn', '检测到重复的模块(已跳过)');
             continue;
         }
@@ -221,7 +228,7 @@ async function init() {
             const module = await import(`./module/${cell.name}/index.js`);
             const mClass = new module.default();
             if (typeof mClass.init === 'function') await mClass.init();
-            moduleList[cellName.toLowerCase()] = mClass;
+            moduleList[minCellName] = mClass;
 
             // 加载额外css
             if (cell.css) {
@@ -237,9 +244,10 @@ async function init() {
             const a = document.createElement('a');
             a.innerText = cell.desc ?? "";
             h4.innerText = cellName;
-            div.dataset.name = cellName.toLowerCase();
-            if (perSelect.has(cellName.toLowerCase())) {
+            div.dataset.name = minCellName;
+            if (perSelect.has(minCellName)) {
                 div.dataset.cell_select = "1";
+                div.dataset.select_time = Date.now();
                 cellSelected++;
             } else {
                 div.dataset.cell_select = "0";
@@ -292,7 +300,12 @@ async function init() {
     // 自动切换逻辑
     if (params.auto) {
         if (!(await getBasicInfo())) return;
-        if (perSelect.size > 0) showCards();
+        if (perSelect.size > 0 && perSelect.size < 5) {
+            const targetSvg = document.getElementById("showTypeBtn" + perSelect.size);
+            if (!targetSvg) return;
+            targetSvg.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+            showCards();
+        }
     }
 }
 
@@ -308,6 +321,9 @@ function sendData(data) {
 
 // 统一导出
 export { sendData, showNote }
+
+// 返回按钮
+document.getElementById("back-btn").addEventListener('click', () => switchCard(--stage));
 
 // 初始页面确认按钮
 document.getElementById("init-btn").addEventListener('click', getBasicInfo);

@@ -55,8 +55,6 @@ export default class {
                 for (const [key, value] of Object.entries(data.ae2_cache_update[type])) {
                     if (!this.#config[type].has(key)) continue;
                     const obj = this.#data[type][key] ??= { count: 0, trend: 0 };
-                    if (key == "minecraft:egg") console.log(value?.amount);
-                    ;
                     const num = Number(value?.amount);
                     if (isNaN(num)) {
                         obj.trend = 9;
@@ -88,7 +86,7 @@ export default class {
      * @param {Node} node 当前模块被分配到的节点实例
      * @param {boolean} isFirst 是否为节点初始化调用
      */
-    divUpdate(node, isFirst) {        
+    divUpdate(node, isFirst) {
         // 获取或创建表身体
         let tbody;
         if (isFirst) {
@@ -104,44 +102,38 @@ export default class {
         } else {
             tbody = node.querySelector('tbody');
         }
+        tbody.innerHTML = ""
 
         // 循环处理所有数据键
         for (const [, type] of Object.entries(this.#data)) {
             for (const [key, data] of Object.entries(type)) {
                 // 获取对应数据行
-                let th;
-                if (isFirst) {
-                    const tr = document.createElement('tr');
-                    const th0 = document.createElement('th');
-                    th = document.createElement('th');
-                    th0.innerText = key;
-                    tr.dataset.id = key;
-                    tr.appendChild(th0);
-                    tr.appendChild(th);
-                    tbody.appendChild(tr);
-                } else {
-                    const tr = node.querySelector(`[data-id="${key}"]`);
-                    th = tr.querySelector('[data-type]')
-                    if (!th) continue;
-                }
+                const tr = document.createElement('tr');
+                const th0 = document.createElement('th');
+                const th1 = document.createElement('th');
+                th0.innerText = key;
+                tr.dataset.id = key;
+                tr.appendChild(th0);
+                tr.appendChild(th1);
+                tbody.appendChild(tr);
 
                 // 设置内容
                 switch (data.trend) {
                     case 1:
-                        th.dataset.type = "1"
-                        th.innerText = "+ " + String(data.count);
+                        th1.dataset.type = "1"
+                        th1.innerText = "+ " + String(data.count);
                         break;
                     case 0:
-                        th.dataset.type = "0"
-                        th.innerText = String(data.count);
+                        th1.dataset.type = "0"
+                        th1.innerText = String(data.count);
                         break;
                     case -1:
-                        th.dataset.type = "-1"
-                        th.innerText = "- " + String(data.count);
+                        th1.dataset.type = "-1"
+                        th1.innerText = "- " + String(data.count);
                         break;
                     default:
-                        th.dataset.type = "9"
-                        th.innerText = "X " + String(data.count);
+                        th1.dataset.type = "9"
+                        th1.innerText = "X " + String(data.count);
                         break;
                 }
             }

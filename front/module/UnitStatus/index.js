@@ -31,7 +31,7 @@ export default class {
             const table = document.createElement('table');
             const thead = document.createElement('thead');
             tbody = document.createElement('tbody');
-            thead.innerHTML = "<tr><th>物品ID</th><th>数量</th></tr>";
+            thead.innerHTML = "<tr><th>单元名称</th><th>状态</th><th>操作</th></tr>";
             table.className = "AEM-item";
             table.appendChild(thead);
             table.appendChild(tbody);
@@ -44,8 +44,6 @@ export default class {
         for (const [, type] of Object.entries(this.#data)) {
             for (const [key, data] of Object.entries(type)) {
                 // 获取对应数据行
-                let th;
-                if (isFirst) {
                     const tr = document.createElement('tr');
                     const th0 = document.createElement('th');
                     th = document.createElement('th');
@@ -54,11 +52,6 @@ export default class {
                     tr.appendChild(th0);
                     tr.appendChild(th);
                     tbody.appendChild(tr);
-                } else {
-                    const tr = node.querySelector(`[data-id="${key}"]`);
-                    th = tr.querySelector('[data-type]')
-                    if (!th) continue;
-                }
 
                 // 设置内容
                 switch (data.trend) {

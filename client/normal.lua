@@ -24,9 +24,8 @@ local w, h = graph.getSize()
 local statusStart = w - 8
 if statusStart < 15 or h < 4 then error("The screen is too small", 2) end
 
-local startIndex = { 1, 1 }
+local startIndex = 1
 local dataCache = {}
-local stopIndex = {}
 local mid = ""
 local statusColor = {
     [1] = { "Unknown", colors.red },
@@ -39,41 +38,7 @@ local pageBar = {
     prevText = "< Prev",
     nextText = "Next >",
 }
-
--- 发送网络消息
-local function transmit(payload)
-    modem.transmit(serverId, serverId, payload)
-end
-
--- 计算当前位置的下一个索引位置
-local function indexIncrement(idx)
-    local page = dataCache[idx[1]]
-    if not page then return { idx[1], idx[2] } end
-    if idx[2] < #page then
-        return { idx[1], idx[2] + 1 }
-    elseif idx[1] < #dataCache then
-        return { idx[1] + 1, 1 }
-    end
-    return { idx[1], idx[2] }
-end
-
--- 计算当前位置的前一个索引位置
-local function indexDecrement(idx)
-    if idx[2] > 1 then
-        return { idx[1], idx[2] - 1 }
-    elseif idx[1] > 1 then
-        local prevPage = dataCache[idx[1] - 1] or {}
-        return { idx[1] - 1, #prevPage }
-    end
-    return { idx[1], idx[2] }
-end
-
--- 是否还有下一页
-local function hasNext()
-    if not stopIndex[1] then return false end
-    local nextIndex = indexIncrement(stopIndex)
-    return nextIndex[1] ~= stopIndex[1] or nextIndex[2] ~= stopIndex[2]
-end
+local pageSize = math.max(1, h - 2)
 
 -- 绘制分页控制栏
 local function drawPageBar()
@@ -82,14 +47,15 @@ local function drawPageBar()
     graph.setTextColor(colors.white)
     graph.clearLine()
 
-    local prevColor = startIndex[1] > 1 or startIndex[2] > 1 and colors.cyan or colors.lightGray
-    local nextColor = hasNext() and colors.cyan or colors.lightGray
+    local stopIndex = math.min(startIndex + pageSize - 1, #dataCache)
+    local prevColor = startIndex > 1 and colors.cyan or colors.lightGray
+    local nextColor = stopIndex < #dataCache and colors.cyan or colors.lightGray
 
     graph.setBackgroundColor(prevColor)
     graph.setTextColor(colors.black)
     graph.write(pageBar.prevText)
 
-    local pageText = string.format("%d:%d - %d:%d", startIndex[1], startIndex[2], stopIndex[1] or 0, stopIndex[2] or 0)
+    local pageText = string.format("%d - %d", startIndex, stopIndex)
     local pageTextX = math.max(1, math.floor((w - #pageText) / 2) + 1)
     graph.setBackgroundColor(colors.black)
     graph.setTextColor(colors.lightBlue)
@@ -107,23 +73,15 @@ end
 
 -- 将视图向后翻页
 local function moveStartBackward()
-    if startIndex[1] <= 1 and startIndex[2] <= 1 then return false end
-    local newIndex = { startIndex[1], startIndex[2] }
-    local lines = h - 2
-    for _ = 1, lines do
-        if newIndex[1] == 1 and newIndex[2] == 1 then
-            break
-        end
-        newIndex = indexDecrement(newIndex)
-    end
-    startIndex = newIndex
+    if startIndex <= 1 then return false end
+    startIndex = math.max(1, startIndex - pageSize)
     return true
 end
 
 -- 将视图向前翻页
 local function moveStartForward()
-    if not hasNext() then return false end
-    startIndex = indexIncrement(stopIndex)
+    if startIndex + pageSize > #dataCache then return false end
+    startIndex = startIndex + pageSize
     return true
 end
 
@@ -144,34 +102,26 @@ local function readerData()
 
     -- 渲染数据
     local row = 2
-    stopIndex = {}
-    for pageIndex = startIndex[1], #dataCache do
-        local page = dataCache[pageIndex]
-        if not page then break end
-
-        local fromItem = pageIndex == startIndex[1] and startIndex[2] or 1
-        for itemIndex = fromItem, #page do
-            if row >= h then break end
-
-            local cell = page[itemIndex]
-            local statusData = statusColor[cell.status or 1] or {}
-
-            local nameText = cell.name or ""
-            if #nameText > w - 12 then
-                nameText = string.sub(nameText, 1, w - 15) .. "..."
-            end
-            graph.setCursorPos(1, row)
-            graph.setTextColor(colors.white)
-            graph.write(nameText)
-            graph.setTextColor(statusData[2] or colors.red)
-            graph.setCursorPos(statusStart, row)
-            graph.write(statusData[1] or "Unknown")
-
-            stopIndex = { pageIndex, itemIndex }
-            row = row + 1
-        end
-
+    local endIndex = math.min(startIndex + pageSize - 1, #dataCache)
+    for itemIndex = startIndex, endIndex do
+        local cell = dataCache[itemIndex]
+        if not cell then break end
         if row >= h then break end
+
+        local statusData = statusColor[cell.status or 1] or {}
+
+        local nameText = cell.name or ""
+        if #nameText > w - 12 then
+            nameText = string.sub(nameText, 1, w - 15) .. "..."
+        end
+        graph.setCursorPos(1, row)
+        graph.setTextColor(colors.white)
+        graph.write(nameText)
+        graph.setTextColor(statusData[2] or colors.red)
+        graph.setCursorPos(statusStart, row)
+        graph.write(statusData[1] or "Unknown")
+
+        row = row + 1
     end
 
     drawPageBar()
@@ -181,7 +131,7 @@ end
 local function netPingTask()
     while true do
         os.sleep(5)
-        transmit({ code = 193, mid = mid })
+        modem.transmit(serverId, serverId, { code = 193, mid = mid })
     end
 end
 
@@ -198,7 +148,7 @@ local function eventTask()
             graph.clear()
             print("Send client exit signal")
             modem.close(serverId)
-            transmit({ code = 107, mid = mid })
+            modem.transmit(serverId, serverId, { code = 107, mid = mid })
             print("The client has exited.")
             return
         elseif -- 网络同步事件
@@ -222,7 +172,7 @@ local function eventTask()
             statusStart = w - 8
             if statusStart < 15 or h < 4 then
                 modem.close(serverId)
-                transmit({ code = 107, mid = mid })
+                modem.transmit(serverId, serverId, { code = 107, mid = mid })
                 graph.setBackgroundColor(colors.black)
                 graph.setTextColor(colors.red)
                 graph.setCursorPos(1, 1)
@@ -245,13 +195,18 @@ graph.setTextScale(1)
 graph.clear()
 
 parallel.waitForAny(function()
+    -- 握手信号发送
     modem.open(serverId)
-    transmit({
-        code = 105,
-        mid = "EventReportServer",
-        data = { clientId = "normal_" .. os.getComputerID() },
-    })
-
+    while true do
+        os.sleep(10)
+        modem.transmit(serverId, serverId, {
+            code = 105,
+            mid = "EventReportServer",
+            data = { clientId = "normal_" .. os.getComputerID() },
+        })
+    end
+end, function()
+    -- 握手成功信号监听
     while true do
         local _, _, id1, id2, data = os.pullEvent("modem_message")
         if
@@ -273,7 +228,8 @@ parallel.waitForAny(function()
         end
     end
 end, function()
-    os.sleep(5)
+    -- 超时函数
+    os.sleep(60)
     error("Server connection timed out!", 2)
 end)
 print("Waiting for server data")
