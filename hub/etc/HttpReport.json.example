@@ -1,0 +1,7 @@
+{
+    "key": "在此填入 publish.sh 生成的 CCT端密钥 (64 位十六进制)",
+    "url": "http://example.com/cct/report.php",
+    "relayName": "redstone_relay_16",
+    "relaySide": "back",
+    "ignoreWebControl": false
+}

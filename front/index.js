@@ -1,348 +1,558 @@
-import { getUrlParams, isMobile } from "https://tool.ycl.cool/public-library/function.esm.min.js";
-import { serverCtrl } from "./lib/sendControl.js";
-import { showNote } from "./lib/showNote.js";
+import { getUrlParams, isMobile, loadExternalResource } from 'https://tool.ycl.cool/public-library/function.esm.min.js'; // Github: YCL0609/YCL-Public-library
+import { serverCtrl } from './lib/sendControl.js';
+import { showNote } from './lib/showNote.js';
+import { config } from './config.js';
+import { initLang, setLang, languageList, currentLang, t } from './lib/i18n.js';
 
-const reportTimeE = document.getElementById("report-time");
-const cellLoading = document.querySelector(".loading");
-const showBtnE = document.getElementById("show-btn");
-const backBtn = document.getElementById("back-btn");
-const cellInit = document.querySelector(".init");
-const cellList = document.querySelector(".list");
-const cellShow = document.querySelector(".show");
-let cellSelected = 0;
-let moduleList = {};
-let activeList = [];
-let showType = 1;
-let stage = 0;
-let dataLoop;
-let ctrlObj;
+/** html元素集合 */
+const els = {
+    initUrl: document.getElementById('init-url'),
+    initPwd: document.getElementById('init-pwd'),
+    initBtn: document.getElementById('init-btn'),
+    backBtn: document.getElementById('back-btn'),
+    reportTime: document.getElementById('report-time'),
+    langSelect: document.getElementById('lang-select'),
+    showType: document.getElementById('show-type'),
+    showList: document.getElementById('show-list'),
+    panes: [1, 2, 3, 4].map((i) => document.getElementById(`pane-${i}`)),
+    cards: [
+        document.getElementById('card-loading'),
+        document.getElementById('card-init'),
+        document.getElementById('card-list'),
+        document.getElementById('card-show')
+    ],
+};
 
-// 切换卡片函数
-function switchCard(cardId) {
-    if (cardId < 0 || cardId > 3) return;
+/** 运行状态 */
+const state = {
+    stage: 0,
+    showType: 1,
+    modules: new Map(), // name -> { name, desc, instance, selected, order }
+    activeList: [],
+    /** @type {serverCtrl} */
+    ctrl: null,
+    timer: null,
+    refreshing: false,
+    reportTime: null,
+    selectedCount: 0,
+    selectSeq: 0,
+};
 
-    stage = cardId;
-    [cellLoading, cellInit, cellList, cellShow].forEach((card, index) => {
-        card.classList.toggle("active", index === cardId);
-    });
+/** 提供给模块的上下文 */
+const ctx = {
+    sendData: (data) => {
+        if (!data || !state.ctrl) return Promise.resolve(false);
+        return state.ctrl.sendCtrl(data);
+    },
+    showNote,
+    config: config.modules,
+    getReportTime: () => state.reportTime,
+    /** 是否只读模式 (未提供操作密钥) */
+    get readonly() {
+        return state.ctrl?.readonly === true;
+    },
+};
 
-    backBtn.style.display = cardId > 1 ? "block" : "none"
+/**
+ * 切换当前显示的卡片
+ * @param {number} index 卡片序号 (0-3)
+ */
+function switchCard(index) {
+    if (index < 0 || index > 3) return;
+    state.stage = index;
+    els.cards.forEach((card, i) => card.classList.toggle('active', i === index));
+    els.backBtn.hidden = index < 2;
 }
 
-// 密钥输入函数
-async function getBasicInfo() {
-    if (stage !== 1) return;
-    const urlE = document.getElementById("init-url");
-    const pwdE = document.getElementById("init-pwd");
-    const btnE = document.getElementById("init-btn");
-    const url = urlE.value.trim();
-    const pwd = pwdE.value.trim();
-    if (btnE.disabled) return;
-    btnE.disabled = true;
-
-    try {
-        ctrlObj = new serverCtrl(url, pwd)
-        switchCard(2);
-
-        // 启动数据获取循环 (每15s获取一次)
-        await getData();
-        dataLoop = setInterval(getData, 15000);
-
-        return true;
-    } catch (e) {
-        showNote('error', e.message);
-        return false;
-    } finally {
-        btnE.disabled = false;
+/** 停止轮询 */
+function stopRefresh() {
+    if (state.timer !== null) {
+        clearInterval(state.timer);
+        state.timer = null;
     }
 }
 
-// 显示到屏幕函数
-async function dataToScreen(isFirst = false) {
-    if (stage != 3) return;
-    const cardE = document.querySelector('.show');
-
-    // 获取DOM节点副本
-    const mainPoint = cardE.cloneNode(true);
-    const divList = [
-        mainPoint.querySelector('#showNode1'),
-        mainPoint.querySelector('#showNode2'),
-        mainPoint.querySelector('#showNode3'),
-        mainPoint.querySelector('#showNode4'),
-    ];
-
-    // 构建任务列表
-    const tasks = activeList.map((v, i) => {
-        // 预防边界情况
-        const target = divList[i];
-        if (!target) return Promise.resolve();
-
-        // 确保处理函数存在
-        if (typeof moduleList[v]?.divUpdate !== 'function') return Promise.resolve();
-
-        return Promise.race([
-            Promise.resolve().then(() => moduleList[v].divUpdate(target, isFirst)),
-            new Promise((_, reject) => setTimeout(() => reject(new Error('函数执行超时')), 5000)),
-        ]);
-    });
-
-    // 运行并处理结果
-    const results = await Promise.allSettled(tasks);
-    results.forEach((result, i) => {
-        if (result.status === 'rejected') {
-            const v = activeList[i];
-            console.error(result.reason);
-            showNote('warn', `实例 [${v}] 执行 divUpdate 失败: ${result.reason?.message || result.reason}`);
-        }
-    });
-
-    // 一次性插入所有修改
-    cardE.replaceChildren(...mainPoint.children);
+/** 启动轮询 */
+function startRefresh() {
+    stopRefresh();
+    if (document.hidden) return;
+    state.timer = setInterval(refresh, config.main.refresh_interval);
 }
 
-// 获取并处理数据
-async function getData() {
-    if (!ctrlObj) return;
-
-    // 获取数据
-    const data = await ctrlObj.getData();
-    if (!data) return;
-
-    // 处理时间字段
-    let reportTime = "N/A"
-    if (data.report_time) {
-        const time = new Date(Number(data.report_time));
-        if (!isNaN(time)) {
-            const hh = String(time.getHours()).padStart(2, '0');
-            const mm = String(time.getMinutes()).padStart(2, '0');
-            const ss = String(time.getSeconds()).padStart(2, '0');
-            reportTime = `${hh}:${mm}:${ss}`;
-        }
-    }
-    reportTimeE.innerText = reportTime;
-
-    // 调用所有数据更新函数
-    const promises = Object.entries(moduleList).map(async ([key, instance]) => {
-        try {
-            await instance?.dataUpdate?.(data.data);
-        } catch (e) {
-            console.error(e);
-            showNote('warn', `实例 [${key}] 执行 dataUpdate 失败: ${e?.message || e}`);
-        }
-    });
-    await Promise.all(promises);
-
-    // 进行数据更新
-    await dataToScreen();
-}
-
-// 显示选择的模块
-async function showCards() {
-    const list = document.querySelectorAll('[data-cell_select="1"]');
-    if (list.length !== showType) return showNote('warn', `已选择模块总数不合规 (${list.length} !== ${showType})`);
-    document.querySelector(".show").dataset.type = showType;
-    // 信息提取
-    const nameList = {};
-    let fallbackTime = Date.now();
-    for (const div of list) {
-        const time = Number(div.dataset.select_time ?? "");
-        const name = div.dataset.name;
-        if (!name || !moduleList[name]) continue;
-        if (isNaN(time)) {
-            nameList[fallbackTime] = name;
-            fallbackTime++;
-        } else {
-            let t = time;
-            while (nameList[t]) t++;
-            nameList[time] = name;
-        }
-    }
-    // 自动排序
-    activeList = Object.entries(nameList)
-        .sort(([keyA], [keyB]) => Number(keyA) - Number(keyB)) // 按数字大小升序排列 Key
-        .map(([, value]) => value); // 只保留 Value
-
-    // 进行数据更新
-    switchCard(3);
-    await dataToScreen(true);
-}
-
-// 页面初始化函数
-async function init() {
-    const startTime = performance.now();
-
-    // url参数解析
-    const params = getUrlParams();
-    if (params.server) {
-        document.getElementById("init-url").value = decodeURIComponent(params.server);
-    }
-    let cleanArr = [];
-    if (params.select) {
-        // 拆分并清洗
-        for (const item of params.select.split(',')) {
-            const cleanTxt = item.replace(/[/\\,]/g, '').toLowerCase();
-            if (!cleanTxt) continue;
-            cleanArr.push(cleanTxt);
-        }
-    }
-    const perSelect = new Set(cleanArr);
-
-    // 加载模块列表
-    let list = [];
-    try {
-        const response = await fetch('./module/activated.json');
-        if (!response.ok) showNote('error', `无法加载模块列表: HTTP ${response.status} ${response.statusText}`, true);
-        list = await response.json();
-        if (!Array.isArray(list)) {
-            showNote('error', '模块列表文件格式错误', true);
-            return;
-        }
-    } catch (e) {
-        showNote('error', '无法加载模块列表: ' + e.message, true);
+/**
+ * 更新报告时间显示
+ * @param {number|null} stamp 报告时间戳 (毫秒)
+ */
+function updateReportTime(stamp) {
+    if (!stamp || Number.isNaN(Number(stamp))) {
+        els.reportTime.textContent = t('app.na');
+        els.reportTime.dataset.stale = '1';
+        state.reportTime = null;
         return;
     }
+    const date = new Date(Number(stamp));
+    const text = [date.getHours(), date.getMinutes(), date.getSeconds()]
+        .map((n) => String(n).padStart(2, '0'))
+        .join(':');
+    els.reportTime.textContent = text;
+    els.reportTime.dataset.stale = Date.now() - Number(stamp) > config.main.stale_after ? '1' : '0';
+    state.reportTime = Number(stamp);
+}
 
-    // 循环加载所有模块
-    let loadCount = 0;
-    const fragment = document.createDocumentFragment();
-    for (const cell of list) {
-        if (typeof cell !== 'object') {
-            showNote('warn', '有模块配置不合规(已跳过)');
-            continue;
-        }
-
-        // 获取模块名称
-        const cellName = cell.name?.replace(/[/\\,]/g, '');
-        if (!cellName) {
-            showNote('warn', '有模块名称为空(已跳过)')
-            continue;
-        }
-        const minCellName = cellName.toLowerCase()
-        if (moduleList[minCellName]) {
-            showNote('warn', '检测到重复的模块(已跳过)');
-            continue;
-        }
-
-        try {
-            // 加载模块
-            const module = await import(`./module/${cell.name}/index.js`);
-            const mClass = new module.default();
-            if (typeof mClass.init === 'function') await mClass.init();
-            moduleList[minCellName] = mClass;
-
-            // 加载额外css
-            if (cell.css) {
-                const link = document.createElement('link');
-                link.rel = 'stylesheet';
-                link.href = `./module/${cell.name}/index.css`;
-                document.head.appendChild(link);
+/** 拉取一次数据并驱动所有模块 */
+async function refresh() {
+    if (!state.ctrl || state.refreshing) return;
+    state.refreshing = true;
+    try {
+        // 获取数据
+        const { ok, data, error, errorCode } = await state.ctrl.getData();
+        if (!ok) {
+            if (![0, 404].includes(errorCode)) {
+                showNote('warn', t('note.noData', { error }));
             }
-
-            // 添加到页面
-            const div = document.createElement('div');
-            const h4 = document.createElement('h4');
-            const a = document.createElement('a');
-            a.innerText = cell.desc ?? "";
-            h4.innerText = cellName;
-            div.dataset.name = minCellName;
-            if (perSelect.has(minCellName)) {
-                div.dataset.cell_select = "1";
-                div.dataset.select_time = Date.now();
-                cellSelected++;
-            } else {
-                div.dataset.cell_select = "0";
-            }
-            div.onclick = () => {
-                if (div.dataset.cell_select === "1") {
-                    div.dataset.cell_select = "0";
-                    div.dataset.select_time = "";
-                    cellSelected--;
-                } else {
-                    if (cellSelected >= showType) return;
-                    div.dataset.cell_select = "1";
-                    div.dataset.select_time = Date.now();
-                    cellSelected++;
-                }
-                showBtnE.disabled = cellSelected !== showType;
-            }
-            div.appendChild(h4);
-            div.appendChild(a);
-            fragment.appendChild(div);
-
-            loadCount++;
-        } catch (e) {
-            console.error(e);
-            showNote('warn', cellName + '模块加载错误(已跳过): ' + e.message);
+            updateReportTime(null);
+            return;
         }
-    }
-
-    if (loadCount > 0) {
-        // 添加到页面
-        const showList = document.querySelector('.show-list');
-        showList.replaceChildren(fragment);
-
-        // 隐藏不需要的模式选择按钮
-        const overflow = 4 - loadCount;
-        if (overflow > 0) {
-            for (let i = loadCount; i < 4; i++) {
-                document.getElementById("showTypeBtn" + (i + 1)).style.display = "none";
-            }
+        if (!data) {
+            // 服务器尚未收到任何上报
+            updateReportTime(null);
+            return;
         }
-    }
+        updateReportTime(Number(data.report_time));
 
-    // 提示信息处理
-    const totalTime = (performance.now() - startTime).toFixed(2);
-    showNote('info', `初始化成功: 已加载 ${loadCount} 个模块, 用时 ${totalTime} ms.`);
-
-    // 切换卡片
-    switchCard(1);
-
-    // 自动切换逻辑
-    if (params.auto) {
-        if (!(await getBasicInfo())) return;
-        if (perSelect.size > 0 && perSelect.size < 5) {
-            const targetSvg = document.getElementById("showTypeBtn" + perSelect.size);
-            if (!targetSvg) return;
-            targetSvg.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
-            showCards();
+        // 生成数据处理函数集合
+        const tasks = [];
+        for (const [name, cell] of state.modules) {
+            if (typeof cell.instance?.dataUpdate !== 'function') continue;
+            tasks.push(
+                Promise.resolve()
+                    .then(() => cell.instance.dataUpdate(data.data, ctx))
+                    .catch((e) => {
+                        console.error(e);
+                        showNote('warn', t('note.moduleDataFailed', { name, error: e?.message || e }));
+                    }),
+            );
         }
+
+        // 运行处理函数
+        await Promise.allSettled(tasks);
+
+        if (state.stage === 3) {
+            // 显示到页面
+            await renderPanes(false);
+        }
+    } finally {
+        state.refreshing = false;
     }
 }
 
 /**
- * 向服务器发送控制信号
- * @param {data} data 要发送的数据
+ * 把已选模块渲染到各自的 cell 中
+ * @param {boolean} isFirst 是否为切换后的首次渲染
  */
-function sendData(data) {
-    if (!data || !ctrlObj) return;
-    data = String(data);
-    ctrlObj.sendCtrl(data);
+async function renderPanes(isFirst) {
+    // 生成渲染函数集合
+    const tasks = state.activeList.map(async (name, index) => {
+        const pane = els.panes[index];
+        const instance = state.modules.get(name)?.instance;
+        if (!pane || typeof instance?.divUpdate !== 'function') return Promise.resolve();
+
+        let timer;
+        const timeout = new Promise((_, reject) => {
+            timer = setTimeout(() => reject(new Error(t('note.renderTimeout'))), config.main.render_timeout);
+        });
+        try {
+            try {
+                return await Promise.race([
+                    Promise.resolve().then(() => instance.divUpdate(pane, isFirst, ctx)),
+                    timeout,
+                ]);
+            } finally {
+                return clearTimeout(timer);
+            }
+        } catch (e) {
+            console.error(e);
+            showNote('warn', t('note.moduleRenderFailed', { name, error: e?.message || e }));
+        }
+    });
+
+    // 运行所有渲染函数
+    await Promise.allSettled(tasks);
 }
 
-// 统一导出
-export { sendData, showNote }
+/**
+ * 选中/取消选中一个模块
+ * @param {string} name 模块标识
+ * @param {boolean} selected
+ */
+function setModuleSelected(name, selected) {
+    const cell = state.modules.get(name);
+    if (!cell || cell.selected === selected) return;
 
-// 返回按钮
-document.getElementById("back-btn").addEventListener('click', () => switchCard(--stage));
+    if (selected) {
+        if (state.selectedCount >= state.showType) {
+            showNote('warn', t('note.selectLimit', { max: state.showType }));
+            return;
+        }
+        cell.selected = true;
+        cell.order = ++state.selectSeq;
+        state.selectedCount += 1;
+    } else {
+        cell.selected = false;
+        cell.order = 0;
+        state.selectedCount = Math.max(0, state.selectedCount - 1);
+    }
 
-// 初始页面确认按钮
-document.getElementById("init-btn").addEventListener('click', getBasicInfo);
+    const card = els.showList.querySelector(`[data-name="${CSS.escape(name)}"]`);
+    if (card) card.classList.toggle('selected', cell.selected);
+}
 
-// 模块选择确认按钮
-showBtnE.addEventListener('click', showCards)
-
-// 多模块显示模块切换按钮
-if (!isMobile()) {
-    for (let i = 1; i <= 4; i++) {
-        document.getElementById("showTypeBtn" + i)
-            .addEventListener('click', () => {
-                showType = i;
-                showBtnE.disabled = cellSelected !== showType;
-                document.getElementById("showTypeBtn" + i).classList.add('active');
-                document.getElementById("showTypeBtn" + showType).classList.remove('active');
-            });
+/**
+ * 切换显示模式 (1-4 分屏)
+ * @param {number} value
+ */
+function setShowType(value) {
+    const type = Math.min(4, Math.max(1, Number(value) || 1));
+    state.showType = type;
+    for (const btn of els.showType.querySelectorAll('.show-type-btn')) {
+        const active = Number(btn.dataset.type) === type;
+        btn.classList.toggle('active', active);
+    }
+    // 超出新上限的模块自动取消选择
+    for (const [name, cell] of state.modules) {
+        if (cell.selected && state.selectedCount > type) setModuleSelected(name, false);
     }
 }
 
-//  页面加载事件
-document.addEventListener('DOMContentLoaded', () => init().catch(e => showNote('error', '初始化失败: ' + e?.message || e, true)));
+/**
+ * 进入数据显示卡片
+ */
+async function showCards() {
+    const selected = [...state.modules.values()]
+        .filter(cell => cell.selected)
+        .sort((a, b) => a.order - b.order)
+        .map(cell => cell.name);
+
+    if (selected.length !== state.showType) {
+        showNote('warn', t('note.selectMismatch', { selected: selected.length, expected: state.showType }));
+        return;
+    }
+
+    state.activeList = selected;
+    els.cards[3].dataset.type = String(state.showType);
+
+    // 清空 pane, 使模块以 isFirst=true 重建视图
+    for (const pane of els.panes) pane.replaceChildren();
+
+    switchCard(3);
+    await renderPanes(true);
+}
+
+/**
+ * 加载并展示模块列表
+ */
+async function loadModules(preselect) {
+    // 加载启动的模块列表
+    let list;
+    try {
+        const response = await fetch('./module/activated.json');
+        if (!response.ok) throw new Error(`HTTP ${response.status} ${response.statusText}`);
+        list = await response.json();
+        if (!Array.isArray(list)) throw new Error(t('note.listFormat'));
+    } catch (e) {
+        showNote('error', t('note.loadListFailed', { error: e?.message || e }), true);
+        return 0;
+    }
+
+    // 遍历加载模块
+    let loaded = 0;
+    const fragment = document.createDocumentFragment();
+    for (const entry of list) {
+        if (!entry || typeof entry !== 'object') {
+            showNote('warn', t('note.moduleConfigInvalid'));
+            continue;
+        }
+
+        const name = String(entry.name ?? '').replace(/[^A-Za-z0-9_.-]/g, '');
+        if (!name || !config.main.module_name_regx.test(name)) {
+            showNote('warn', t('note.moduleNameInvalid'));
+            continue;
+        }
+        if (state.modules.has(name)) {
+            showNote('warn', t('note.moduleDuplicated', { name }));
+            continue;
+        }
+
+        try {
+            // 加载模块本体
+            const module = await import(`./module/${name}/index.js`);
+            const instance = new module.default();
+            if (typeof instance.init === 'function') await instance.init(ctx);
+
+            // 引入可能的css样式
+            if (entry.css) await loadExternalResource(`./module/${name}/index.css`, 'css');
+
+            // 加入模块Map
+            state.modules.set(name, {
+                name,
+                descFallback: String(entry.desc ?? ''),
+                desc: t(`modules.${name}.desc`, null, String(entry.desc ?? '')),
+                instance,
+                selected: false,
+                order: 0,
+            });
+
+            // 创建卡片容器
+            const card = document.createElement('button');
+            const title = document.createElement('span');
+            const desc = document.createElement('span');
+            card.type = 'button';
+            card.className = 'module-card';
+            card.dataset.name = name;
+            title.className = 'module-name';
+            title.textContent = name;
+            desc.className = 'module-desc';
+            desc.textContent = t(`modules.${name}.desc`, null, String(entry.desc ?? ''));
+            card.addEventListener('click', () => {
+                const cell = state.modules.get(name);
+                setModuleSelected(name, !cell.selected);
+            });
+
+            // 添加到页面分片
+            card.append(title, desc);
+            fragment.appendChild(card);
+            loaded++;
+        } catch (e) {
+            console.error(e);
+            showNote('warn', t('note.moduleLoadFailed', { name, error: e?.message || e }));
+        }
+    }
+
+    if (loaded > 0) {
+        els.showList.replaceChildren(fragment);
+        // 超出模块数量的显示模式按钮隐藏
+        for (const btn of els.showType.querySelectorAll('.show-type-btn')) {
+            btn.hidden = Number(btn.dataset.type) > loaded;
+        }
+        if (!isMobile()) setShowType(1);
+    }
+
+    // 预选 (来自 URL 参数)
+    if (preselect?.length) {
+        const target = Math.min(4, preselect.length);
+        setShowType(target);
+        for (const name of preselect) {
+            if (state.modules.has(name)) setModuleSelected(name, true);
+        }
+    }
+
+    return loaded;
+}
+
+/**
+ * 刷新模块卡片上的描述文案 (语言切换后调用)
+ */
+function renderModuleDesc() {
+    for (const [name, cell] of state.modules) {
+        const card = els.showList.querySelector(`[data-name="${CSS.escape(name)}"]`);
+        const descEl = card?.querySelector('.module-desc');
+        if (!descEl) continue;
+        cell.desc = t(`modules.${name}.desc`, null, cell.descFallback);
+        descEl.textContent = cell.desc;
+    }
+}
+
+/**
+ * 初始化语言选择器
+ */
+async function initLangPicker() {
+    const picker = els.langSelect;
+    if (!picker) return;
+
+    const list = await languageList();
+    // 只有一种语言时不显示选择器
+    if (list.length < 2) {
+        picker.hidden = true;
+        return;
+    }
+
+    picker.replaceChildren(...list.map(({ id, name }) => {
+        const option = document.createElement('option');
+        option.value = id;
+        option.textContent = name;
+        return option;
+    }));
+    picker.value = currentLang();
+    picker.hidden = false;
+    picker.addEventListener('change', () => {
+        setLang(picker.value).catch((e) => {
+            console.error(e);
+            showNote('error', e?.message || String(e));
+        });
+    });
+}
+
+/**
+ * 语言切换后的重绘
+ * @param {CustomEvent} event
+ */
+async function onLangChanged(event) {
+    const lang = event.detail?.info?.name ?? event.detail?.lang ?? currentLang();
+    renderModuleDesc();
+    if (state.stage === 3) {
+        for (const pane of els.panes) pane.replaceChildren();
+        await renderPanes(true);
+    }
+    showNote('info', t('note.langChanged', { lang }));
+}
+
+/**
+ * 读取表单并建立连接
+ * @returns {Promise<boolean>}
+ */
+async function connect() {
+    if (state.stage !== 1) return false;
+
+    // 获取用户输入
+    const url = els.initUrl.value.trim();
+    const key = els.initPwd.value.trim();
+    if (!url) {
+        showNote('warn', t('note.needUrl'));
+        els.initUrl.focus();
+        return false;
+    }
+
+    els.initBtn.disabled = true;
+    try {
+        // 初始化服务器连接
+        const ctrl = new serverCtrl(url, key);
+        const probe = await ctrl.getData();
+        if (!probe.ok) {
+            showNote('error', t('note.connectFailed', { error: probe.error ?? t('app.unknownError') }));
+            return false;
+        }
+        state.ctrl = ctrl;
+
+        // 提提示信息
+        if (ctrl.readonly) {
+            showNote('info', t('note.readonlyMode'));
+        } else if (!(await ctrl.ping())) {
+            showNote('warn', t('note.pingFailed'));
+        }
+
+        // 切换卡片并开启数据循环
+        switchCard(2);
+        await refresh();
+        startRefresh();
+
+        return true;
+    } catch (e) {
+        showNote('error', e?.message || String(e));
+        return false;
+    } finally {
+        els.initBtn.disabled = false;
+    }
+}
+
+/** 页面初始化 */
+async function initPage() {
+    const started = performance.now();
+
+    // 初始化多语言 (必须在渲染任何静态/动态文案之前)
+    await initLang();
+    await initLangPicker();
+
+    const params = getUrlParams();
+
+    // URL指定服务器地址
+    if (params.server) {
+        els.initUrl.value = decodeURIComponent(params.server);
+    }
+
+    // URL预选模块
+    const preselect = [];
+    if (params.select) {
+        for (const raw of String(params.select).split(',')) {
+            const name = raw.replace(/[/\\,]/g, '').trim();
+            if (name && config.main.module_name_regx.test(name) && !preselect.includes(name)) {
+                preselect.push(name);
+            }
+        }
+    }
+
+    // 加载模块
+    const loaded = await loadModules(preselect);
+    const cost = (performance.now() - started).toFixed(0);
+    if (loaded > 0) {
+        showNote('info', t('note.loaded', { count: loaded, cost }));
+    }
+    switchCard(1);
+
+    // 自动模式
+    if (!!params.auto) {
+        // 连接服务器
+        if (!(await connect())) return;
+        // 应用显示模式
+        const mode = Number(params.mode);
+        if (Number.isFinite(mode) && mode >= 1 && mode <= 4) setShowType(mode);
+        // 进入模块展示界面
+        const pending = [...state.modules.values()].filter(c => c.selected).length;
+        if (pending === state.showType && pending > 0) {
+            await showCards();
+        } else {
+            showNote('warn', t('note.autoNotEnough', { selected: pending, expected: state.showType }));
+        }
+    }
+}
+
+// 连接服务器按钮
+document.getElementById('init-form').addEventListener('submit', (e) => {
+    e.preventDefault();
+    connect();
+});
+
+// 开始显示数据卡片
+document.getElementById('show-btn').addEventListener('click', showCards);
+
+// 返回按钮
+els.backBtn.addEventListener('click', () => {
+    if (state.stage == 3) {
+        // 返回模块列表
+        switchCard(2);
+    } else if (state.stage === 2) {
+        // 返回服务器信息输入界面
+        stopRefresh();
+        state.ctrl = null;
+        switchCard(1);
+    }
+});
+
+// 显示模式选项
+els.showType.addEventListener('click', (e) => {
+    const btn = e.target.closest('.show-type-btn');
+    if (!btn || btn.hidden) return;
+    setShowType(Number(btn.dataset.type));
+});
+
+// 页面可视性事件
+document.addEventListener('visibilitychange', () => {
+    if (!state.ctrl) return;
+    if (document.hidden) {
+        // 不可视时停止数据获取
+        stopRefresh();
+    } else {
+        // 重新启动循环
+        refresh();
+        startRefresh();
+    }
+});
+
+// 语言切换事件
+document.addEventListener('langchange', (e) => {
+    onLangChanged(e).catch((err) => console.error(err));
+});
+
+// 初始化事件
+document.addEventListener('DOMContentLoaded', () => {
+    initPage().catch(e => showNote('error', t('note.initFailed', { error: e?.message || e }), true));
+});

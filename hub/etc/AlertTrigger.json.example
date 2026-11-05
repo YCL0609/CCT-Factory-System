@@ -1,0 +1,42 @@
+[
+    {
+        "objectId": "minecraft:light_blue_carpet",
+        "objectType": "item",
+        "cellType": 1,
+        "cellTag": "light_blue_carpet_production",
+        "thresholds": [
+            {
+                "type": "less",
+                "alertType": 1,
+                "reverse": false,
+                "value": 3000
+            },
+            {
+                "type": "more",
+                "alertType": 1,
+                "reverse": true,
+                "value": 1000000
+            }
+        ]
+    },
+    {
+        "objectId": "manaliquidizer:mana_fluid",
+        "objectType": "fluid",
+        "cellType": 1,
+        "cellTag": "mana_production",
+        "thresholds": [
+            {
+                "type": "less",
+                "alertType": 1,
+                "reverse": false,
+                "value": 3000
+            },
+            {
+                "type": "more",
+                "alertType": 1,
+                "reverse": true,
+                "value": 1000000
+            }
+        ]
+    }
+]

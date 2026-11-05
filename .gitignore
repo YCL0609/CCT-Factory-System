@@ -1,2 +1,6 @@
 .vscode
-hub/etc/*
+hub/etc/*.json
+hub/startup.lua
+hub/log/
+front/module/AEMonitor/list.json
+server/config.php

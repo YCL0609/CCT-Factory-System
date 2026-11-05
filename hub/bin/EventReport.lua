@@ -1,19 +1,20 @@
---- @class RCeventMap
---- @field noAE2Update boolean 是否停止处理'ae2_cache_update'事件
---- @field noUnitChange boolean 是否停止处理'unit_status_change'事件
+--- @class RCeventMap 禁用事件映射
+--- @field ae2_cache_update boolean 是否启用 'ae2_cache_update' 事件
+--- @field unit_status_change boolean 是否启用 'unit_status_change' 事件
 
---- 自动更新类
+--- 客户端事件推送类
+--- * 维护客户端连接, 并将主机侧事件缓存/推送给所有客户端
 --- @class EventReport
 --- @field _client number 客户端计数
---- @field _libs {log:Log, net:MiniNet} 依赖库集合
+--- @field _libs {log:Log, net:MiniNet, root:string} 依赖库集合
 --- @field _enabledMap RCeventMap 禁用事件映射
 --- @field _dataCache table 数据缓存
 local EventReport = {}
 EventReport.__index = EventReport
 
---- 初始化自动更新类
+--- 初始化事件推送类
 --- @param config table 配置参数
---- @param libs {log:Log, net:MiniNet} 依赖库集合
+--- @param libs {log:Log, net:MiniNet, root:string} 依赖库集合
 --- @return EventReport
 function EventReport:new(config, libs)
     -- 配置处理
@@ -39,22 +40,24 @@ end
 
 function EventReport:_initCellNetServer()
     self._libs.net:startTasks({ {
-        mid = "EventReportServer",
+        mid = "EventReportClient",
         rawCount = math.huge, -- 永不超时
         callback = function(_, code1, isTimeout1, data)
             if isTimeout1 or code1 ~= 105 or type(data) ~= "table" or not data.clientId then
                 return true
             end
-            self._libs.log:debug("[EventReport] New client connection request")
 
-            local mid = self._libs.net:genMessageID()[1]
+            local clientId = tostring(data.clientId)
+            self._libs.log:debug("[EventReport] New client connection request:", clientId)
+
+            local mid = self._libs.net:genMessageID(1)[1]
             -- 进行握手
             self._libs.net:send(
                 "CLIENT",
                 106,
                 {
                     mid = mid,
-                    clientId = data.clientId
+                    clientId = clientId
                 },
                 3,
                 function(_, code2, isTimeout2)
@@ -66,14 +69,17 @@ function EventReport:_initCellNetServer()
                             rawCount = 6, -- 默认配置时为 30s 超时时间
                             callback = function(_, code3, isTimeout3)
                                 if code3 == 193 then
+                                    os.queueEvent("client_ping", mid)
                                     return true
                                 elseif code3 == 107 then
-                                    self._client = self._client - 1
-                                    self._libs.log:info("[EventReport] Client", data.clientId, "has disconnected it self")
+                                    self._client = math.max(0, self._client - 1)
+                                    os.queueEvent("client_disconnect", mid, false)
+                                    self._libs.log:info("[EventReport] Client", clientId, "has disconnected it self")
                                     return false
                                 elseif isTimeout3 then
-                                    self._client = self._client - 1
-                                    self._libs.log:warn("[EventReport] Client", data.clientId,
+                                    self._client = math.max(0, self._client - 1)
+                                    os.queueEvent("client_disconnect", mid, true)
+                                    self._libs.log:warn("[EventReport] Client", clientId,
                                         "has disconnected because net timeout")
                                     return false
                                 else
@@ -81,12 +87,13 @@ function EventReport:_initCellNetServer()
                                 end
                             end
                         } })
+                        os.queueEvent("client_connect", mid)
                         self:_sendData("ALL")
-                        self._libs.log:info("[EventReport] New client", data.clientId, "has connected")
+                        self._libs.log:info("[EventReport] New client", clientId, "has connected")
                     elseif isTimeout2 then
-                        self._libs.log:error("[EventReport] Client", data.clientId, "handshake timed out")
+                        self._libs.log:error("[EventReport] Client", clientId, "handshake timed out")
                     else
-                        self._libs.log:error("[EventReport] Client", data.clientId, "handshake failed")
+                        self._libs.log:error("[EventReport] Client", clientId, "handshake failed")
                     end
                     return false
                 end
@@ -96,24 +103,26 @@ function EventReport:_initCellNetServer()
     } })
 end
 
---- 发送数据
---- @param type string 要发送的数据类型 ("ALL"表示遍历都发送)
-function EventReport:_sendData(type)
-    if type == "ALL" then
+--- 重新发送指定类型的缓存数据
+--- @param dataType string 要发送的数据类型 ("ALL"表示遍历所有启用的类型)
+function EventReport:_sendData(dataType)
+    if dataType == "ALL" then
         for name, data in pairs(self._dataCache) do
             if self._enabledMap[name] then
-                self._libs.net:broadcast("CLIENT", 106, {
+                self._libs.net:broadcast("CLIENT", 204, {
                     type = name,
                     data = data
                 })
             end
         end
-    else
-        self._libs.net:broadcast("CLIENT", 106, {
-            type = type,
-            data = self._dataCache[type]
-        })
+        return
     end
+
+    if not self._enabledMap[dataType] then return end
+    self._libs.net:broadcast("CLIENT", 204, {
+        type = dataType,
+        data = self._dataCache[dataType]
+    })
 end
 
 -- 获取需要注册的事件配置
@@ -133,9 +142,14 @@ end
 --- 事件触发函数
 --- @param event table 事件对象
 function EventReport:epoll(event)
-    if self._enabledMap[event[1]] and self._client ~= 0 or type(event[2]) == "table" then
-        self._dataCache[event[1]] = event[2]
-        self:_sendData(event[1])
+    if type(event) ~= "table" then return end
+
+    local name = event[1]
+    if not self._enabledMap[name] or type(event[2]) ~= "table" then return end
+
+    self._dataCache[name] = event[2]
+    if self._client > 0 then
+        self:_sendData(name)
     end
 end
 

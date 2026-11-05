@@ -1,0 +1,70 @@
+{
+    "queueEvent": true,
+    "monitor": {
+       "name": "monitor_3",
+       "minWidth": 35,
+       "minHeight": 5
+    },
+    "list": [
+        {
+            "id": "minecraft:light_blue_carpet",
+            "name": "L-Blue Carpet",
+            "type": "item",
+            "unit": "pcs"
+        },
+        {
+            "id": "minecraft:quartz",
+            "name": "Quartz",
+            "type": "item",
+            "unit": "pcs"
+        },
+        {
+            "id": "minecraft:coal",
+            "name": "Coal",
+            "type": "item",
+            "unit": "pcs"
+        },
+        {
+            "id": "minecraft:sugar",
+            "name": "Sugar",
+            "type": "item",
+            "unit": "pcs"
+        },
+        {
+            "id": "create:cinder_flour",
+            "name": "Cinder Flour",
+            "type": "item",
+            "unit": "pcs"
+        },
+        {
+            "id": "minecraft:egg",
+            "name": "Egg",
+            "type": "item",
+            "unit": "pcs"
+        },
+        {
+            "id": "manaliquidizer:mana_fluid",
+            "name": "Mana Fluid",
+            "type": "fluid",
+            "unit": "B  "
+        },
+        {
+            "id": "mekanism:hydrogen",
+            "name": "Hydrogen",
+            "type": "fluid",
+            "unit": "B  "
+        },
+        {
+            "id": "mekanism:oxygen",
+            "name": "Oxygen",
+            "type": "fluid",
+            "unit": "B  "
+        },
+        {
+            "id": "mekanism:bio_fuel",
+            "name": "Bio Fuel",
+            "type": "item",
+            "unit": "pcs"
+        }
+    ]
+}

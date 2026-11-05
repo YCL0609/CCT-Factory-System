@@ -1,0 +1,48 @@
+.data-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: .86rem;
+    font-variant-numeric: tabular-nums;
+}
+
+.data-table thead th {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    padding: 8px 10px;
+    background: var(--bg-muted);
+    color: var(--fg-muted);
+    font-size: .8rem;
+    font-weight: 600;
+    text-align: left;
+    white-space: nowrap;
+    border-bottom: 1px solid var(--border);
+}
+
+.data-table th,
+.data-table td {
+    padding: 7px 10px;
+    border-bottom: 1px solid var(--border);
+}
+
+.data-table tbody tr:hover {
+    background: color-mix(in srgb, var(--primary) 6%, transparent);
+}
+
+.data-table .num {
+    text-align: right;
+    white-space: nowrap;
+}
+
+.data-table tbody th {
+    font-weight: 500;
+    text-align: left;
+    word-break: break-word;
+}
+
+.data-table .empty-note {
+    display: table-cell;
+    padding: 24px 8px;
+    text-align: center;
+    color: var(--fg-muted);
+}

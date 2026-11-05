@@ -3,100 +3,125 @@
 
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="color-scheme" content="light dark">
     <link rel="stylesheet" href="./index.css">
-    <title>Factory Management Page</title>
+    <link rel="stylesheet" href="./module/common.css">
+    <title data-i18n="app.title">CCT 工厂管理页</title>
 </head>
 
 <body>
     <!-- 通知容器 -->
-    <div class="note-container" id="noteDiv"></div>
-    <!-- 表头 -->
-    <div class="header">
-        <button id="back-btn" type="button">返回上一页</button>
-        <h2>Factory Management Page</h2>
-        <h4>当前数据报告时间: <a id="report-time">N/A</a></h4>
-    </div>
-    <!-- 卡片容器 -->
-    <div class="container">
+    <div class="note-container" id="note-container" role="status" aria-live="polite"></div>
 
-        <!-- 加载卡片 -->
-        <div class="loading active">
-            <h1>加载中...</h1>
-        </div>
+    <!-- 顶部栏 -->
+    <header class="app-header">
+        <button id="back-btn" class="btn btn-ghost" type="button" data-i18n="app.back" hidden>← 返回</button>
+        <h1 class="app-title" data-i18n="app.heading">工厂管理页面</h1>
+        <p class="report-time"><span data-i18n="app.reportTime">报告时间</span>: <span id="report-time">N/A</span></p>
+        <select id="lang-select" class="lang-select" aria-label="Language" data-i18n-aria-label="app.language"
+            hidden></select>
+    </header>
 
-        <!-- 基础信息输入卡片 -->
-        <div class="init">
-            <div class="init-container">
-                <div class="init-cell">
-                    <h4>服务器地址:</h4>
-                    <input id="init-url" type="text" placeholder="https://example.com/cctApi">
-                </div>
-                <div class="init-cell">
-                    <h4>操作密钥(可选):</h4>
-                    <input id="init-pwd" type="password" placeholder="xxxxxxxxxxxxxxxxxxxxxxx">
-                </div>
-                <button id="init-btn">确定</button>
-                <div class="init-cell">
-                    <li>若不输入密钥则进入演示模式</li>
-                    <li>服务器地址结尾不需要带'/'</li>
-                </div>
-            </div>
-        </div>
+    <main class="stage" id="stage">
+        <!-- 卡片 0: 加载中 -->
+        <section class="card loading active" id="card-loading" aria-label="加载中" data-i18n-aria-label="loading.aria">
+            <div class="loader" aria-hidden="true"></div>
+            <h2 data-i18n="loading.text">正在加载模块…</h2>
+        </section>
 
-        <!-- 模块列表卡片 -->
-        <div class="list">
+        <!-- 卡片 1: 服务器信息 -->
+        <section class="card init" id="card-init" aria-label="服务器配置" data-i18n-aria-label="init.aria">
+            <form class="init-form" id="init-form" autocomplete="off">
+                <h2 class="card-title" data-i18n="init.heading">连接到主机</h2>
+
+                <div class="field">
+                    <label for="init-url" data-i18n="init.urlLabel">服务器地址</label>
+                    <input id="init-url" name="url" type="url" inputmode="url" spellcheck="false"
+                        placeholder="https://example.com/cct" data-i18n-placeholder="init.urlPlaceholder" required>
+                    <p class="hint" data-i18n="init.urlHint">填写 report.php / control.php 所在目录的地址, 结尾不需要带 “/”</p>
+                </div>
+
+                <div class="field">
+                    <label for="init-pwd"><span data-i18n="init.keyLabel">操作密钥</span><span class="optional"
+                            data-i18n="init.keyOptional">(可选)</span></label>
+                    <input id="init-pwd" name="key" type="password" spellcheck="false" placeholder="64 位十六进制密钥"
+                        data-i18n-placeholder="init.keyPlaceholder">
+                    <p class="hint" data-i18n="init.keyHint">留空则以只读演示模式运行, 无法下发控制信号</p>
+                </div>
+
+                <button id="init-btn" class="btn btn-primary" type="submit" data-i18n="init.submit">确定</button>
+            </form>
+        </section>
+
+        <!-- 卡片 2: 模块列表 -->
+        <section class="card list" id="card-list" aria-label="模块列表" data-i18n-aria-label="list.aria">
             <div class="list-header">
-                <div class="show-info">
-                    <h3>模块列表:</h3>
-                    <button id="show-btn" disabled>开始</button>
+                <div class="list-title">
+                    <h2 class="card-title" data-i18n="list.heading">模块列表</h2>
+                    <button id="show-btn" class="btn btn-primary" type="button" data-i18n="list.start">开始显示</button>
                 </div>
-                <div class="show-type">
-                    <p>多模块显示模式:</p>
-                    <svg id="showTypeBtn1" class="active" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 25 25"
-                        width="25" height="25" fill="none" stroke="currentColor" stroke-width="1.8">
-                        <rect x="2.5" y="2.5" width="20" height="20" rx="3" />
-                    </svg>
-                    <svg id="showTypeBtn2" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 25 25" width="25" height="25"
-                        fill="none" stroke="currentColor" stroke-width="1.8">
-                        <rect x="2.5" y="2.5" width="9" height="20" rx="2" />
-                        <rect x="13.5" y="2.5" width="9" height="20" rx="2" />
-                    </svg>
-                    <svg id="showTypeBtn3" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 25 25" width="25" height="25"
-                        fill="none" stroke="currentColor" stroke-width="1.8">
-                        <rect x="2.5" y="2.5" width="9" height="20" rx="2" />
-                        <rect x="13.5" y="2.5" width="9" height="9" rx="2" />
-                        <rect x="13.5" y="13.5" width="9" height="9" rx="2" />
-                    </svg>
-                    <svg id="showTypeBtn4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 25 25" width="25" height="25"
-                        fill="none" stroke="currentColor" stroke-width="1.8">
-                        <rect x="2.5" y="2.5" width="9" height="9" rx="2" />
-                        <rect x="13.5" y="2.5" width="9" height="9" rx="2" />
-                        <rect x="2.5" y="13.5" width="9" height="9" rx="2" />
-                        <rect x="13.5" y="13.5" width="9" height="9" rx="2" />
-                    </svg>
+
+                <div class="show-type" id="show-type" role="group" aria-label="多模块显示模式"
+                    data-i18n-aria-label="list.modeAria">
+                    <span class="show-type-label" data-i18n="list.modeLabel">显示模式</span>
+                    <button type="button" class="show-type-btn active" data-type="1" aria-pressed="true"
+                        title="单模块" data-i18n-title="list.mode.single">
+                        <svg viewBox="0 0 25 25" width="22" height="22" fill="none" stroke="currentColor"
+                            stroke-width="1.8" aria-hidden="true">
+                            <rect x="2.5" y="2.5" width="20" height="20" rx="3" />
+                        </svg>
+                        <span class="sr-only" data-i18n="list.mode.single">单模块</span>
+                    </button>
+                    <button type="button" class="show-type-btn" data-type="2" aria-pressed="false" title="左右两栏"
+                        data-i18n-title="list.mode.split">
+                        <svg viewBox="0 0 25 25" width="22" height="22" fill="none" stroke="currentColor"
+                            stroke-width="1.8" aria-hidden="true">
+                            <rect x="2.5" y="2.5" width="9" height="20" rx="2" />
+                            <rect x="13.5" y="2.5" width="9" height="20" rx="2" />
+                        </svg>
+                        <span class="sr-only" data-i18n="list.mode.split">左右两栏</span>
+                    </button>
+                    <button type="button" class="show-type-btn" data-type="3" aria-pressed="false" title="左一右二"
+                        data-i18n-title="list.mode.leftRight">
+                        <svg viewBox="0 0 25 25" width="22" height="22" fill="none" stroke="currentColor"
+                            stroke-width="1.8" aria-hidden="true">
+                            <rect x="2.5" y="2.5" width="9" height="20" rx="2" />
+                            <rect x="13.5" y="2.5" width="9" height="9" rx="2" />
+                            <rect x="13.5" y="13.5" width="9" height="9" rx="2" />
+                        </svg>
+                        <span class="sr-only" data-i18n="list.mode.leftRight">左一右二</span>
+                    </button>
+                    <button type="button" class="show-type-btn" data-type="4" aria-pressed="false" title="四宫格"
+                        data-i18n-title="list.mode.grid">
+                        <svg viewBox="0 0 25 25" width="22" height="22" fill="none" stroke="currentColor"
+                            stroke-width="1.8" aria-hidden="true">
+                            <rect x="2.5" y="2.5" width="9" height="9" rx="2" />
+                            <rect x="13.5" y="2.5" width="9" height="9" rx="2" />
+                            <rect x="2.5" y="13.5" width="9" height="9" rx="2" />
+                            <rect x="13.5" y="13.5" width="9" height="9" rx="2" />
+                        </svg>
+                        <span class="sr-only" data-i18n="list.mode.grid">四宫格</span>
+                    </button>
                 </div>
             </div>
+
             <hr>
-            <div class="show-list">
-                <p id="showListNote">模块列表为空.</p>
+            <div class="show-list" id="show-list">
+                <p class="empty-note" data-i18n="list.empty">模块列表为空.</p>
             </div>
-        </div>
+        </section>
 
-        <!-- 模块显示卡片 -->
-        <div class="show" data-type="0">
-            <div class="node-list">
-                <div id="showNode1"></div>
-                <div id="showNode4"></div>
-            </div>
-            <h4 id="showTypeErr">显示类型配置错误!</h4>
-            <div class="node-list">
-                <div id="showNode2"></div>
-                <div id="showNode3"></div>
-            </div>
-        </div>
+        <!-- 卡片 3: 模块显示 -->
+        <section class="card show" id="card-show" data-type="0" aria-label="模块显示" data-i18n-aria-label="show.aria">
+            <p class="show-hint" data-i18n="show.hint">显示类型配置错误!</p>
+            <div class="pane" id="pane-1"></div>
+            <div class="pane" id="pane-2"></div>
+            <div class="pane" id="pane-3"></div>
+            <div class="pane" id="pane-4"></div>
+        </section>
+    </main>
 
-    </div>
     <script type="module" src="./index.js"></script>
 </body>
 

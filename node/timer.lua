@@ -1,55 +1,41 @@
-local runData = settings.get("unit.rundata") or {}
-local monitors = { peripheral.find("monitor") }
-
 --- 静态配置
---- @type {
----  tag: string,
----  input: number,
----  waitTime: number,
----  serverId: number,
---- }
+--- @type { tag:string, input:number, waitTime:number, serverId:number }
 local staticCfg = {}
 
 --- 外部事件映射表
 --- @type table<string,function>
 local eventMap = {}
 
---- 执行状态切换函数
+--- 执行状态切换函数 (由 user.lua 提供)
 --- @type fun(runData:table, hardDisabled:boolean)
 local doControl = function() end
 
---- 执行恢复逻辑函数
+--- 执行恢复逻辑函数 (由 user.lua 提供)
 --- @type fun(runData:table)
 local doRecovery = function() end
 
--- 初始化默认外设
-local modem
-for _, v in ipairs({ peripheral.find("modem") }) do
-    if v.isWireless() then
-        modem = v
-        break
+--- 执行告警控制事件 (由 user.lua 提供)
+--- @type fun(runData:table, tag:string, status:boolean)
+local doTrigger = function() end
+
+--- 侧面映射表
+local SIDES = { "bottom", "top", "back", "front", "right", "left" }
+
+-- 运行时数据
+local runData = settings.get("unit.rundata") or {}
+-- 硬禁用状态
+local hardDisabled = false
+
+--- 获取无线调制解调器
+local function findWirelessModem()
+    for _, v in ipairs({ peripheral.find("modem") }) do
+        if v.isWireless() then return v end
     end
-end
-if not modem then
     error("Unable to get the wireless modem instance", 2)
 end
 
---- 执行告警控制事件
---- @type fun(runData:table, tag: string, status: boolean)
-local doTrigger = function() end
-
--- 硬禁用
-local hardDisabled = false
-
--- 侧面映射
-local sideMap = {
-    [1] = "bottom",
-    [2] = "top",
-    [3] = "back",
-    [4] = "front",
-    [5] = "right",
-    [6] = "left"
-}
+local modem = findWirelessModem()
+local monitors = { peripheral.find("monitor") }
 
 --- 保存配置到磁盘
 local function saveConfig()
@@ -57,9 +43,16 @@ local function saveConfig()
     settings.save()
 end
 
+--- 读取硬禁用输入
+local function readHardDisabled()
+    local side = SIDES[staticCfg.input]
+    if not side then return false end
+    return redstone.getInput(side) == true
+end
+
 --- 发送ACK包
 --- @param isPing? boolean 是否为ping包
---- @param mid? any 是否为ping包
+--- @param mid? string 目标消息ID
 local function sendACK(isPing, mid)
     local statusId = runData.status and 4 or 5
     local disabled = runData.disabled or hardDisabled
@@ -85,19 +78,85 @@ local function showStatus()
     end
 end
 
+--- 触发用户自定义事件钩子
+local function fireHook(eventName, event)
+    local hook = eventMap[eventName]
+    if type(hook) == "function" then
+        hook(runData, event)
+    end
+end
+
+--- 执行一次工作循环
+local function runOnce()
+    if runData.status or runData.disabled or hardDisabled then return end
+    runData.status = true
+    showStatus()
+    doControl(runData, hardDisabled)
+    runData.status = false
+    showStatus()
+end
+
 --- 执行工作循环
 local function doJob()
     while true do
         os.pullEvent("doJob")
-
-        if not (runData.status or runData.disabled or hardDisabled) then
-            runData.status = true
-            showStatus()
-            doControl(runData, hardDisabled)
-            runData.status = false
-            showStatus()
-        end
+        runOnce()
     end
+end
+
+--- 处理主机侧网络指令
+--- @param payload table 消息体
+--- @param event table 原始事件
+local function handleServerMessage(payload, event)
+    local needSave = false
+    local code = payload.code
+
+    if code == 100 then -- 主机上线
+        runData.serverOnline = true
+        needSave = true
+    elseif code == 101 then -- 主机离线
+        runData.serverOnline = false
+        needSave = true
+    elseif code == 102 then -- 主机同步mid表
+        local idMap = type(payload.data) == "table" and payload.data or {}
+        local newId = idMap[staticCfg.tag]
+        if newId then
+            runData.serverOnline = true
+            runData.mid = newId
+            needSave = true
+        end
+    elseif code == 200 then -- 主机切换状态信号
+        if payload.tag == staticCfg.tag or payload.tag == "ALL" then
+            os.queueEvent("doJob")
+            sendACK(false, payload.mid)
+        end
+    elseif code == 201 then -- 主机状态指定请求 (计时器单元不支持, 返回 NCK)
+        if payload.tag == staticCfg.tag then
+            modem.transmit(staticCfg.serverId, staticCfg.serverId, { code = 104, mid = payload.mid })
+        end
+    elseif code == 202 then -- 主机禁用状态请求
+        if payload.tag == staticCfg.tag or payload.tag == "ALL" then
+            if hardDisabled then
+                -- 硬禁用激活: 拦截所有软控制指令返回 NCK 104
+                modem.transmit(staticCfg.serverId, staticCfg.serverId, { code = 104, mid = payload.mid })
+            else
+                local target = type(payload.data) == "table" and not not payload.data.status or false
+                if runData.disabled ~= target then
+                    runData.disabled = target
+                end
+                -- 发送 ACK 确认
+                sendACK(false, payload.mid)
+            end
+        end
+    elseif code == 203 then -- 主机单元告警状态触发
+        if payload.tag == staticCfg.tag and type(payload.data) == "table" then
+            doTrigger(runData, payload.data.tag, payload.data.status)
+        end
+    else
+        fireHook("modem_message", event)
+    end
+
+    if needSave then saveConfig() end
 end
 
 --- 事件处理循环
@@ -106,74 +165,20 @@ local function eventJob()
         local event = { os.pullEventRaw() }
         local eventName = event[1]
 
-        if eventName == "monitor_touch" and not runData.status then
-            os.queueEvent("doJob")
-        elseif eventName == "modem_message" and event[4] == staticCfg.serverId and type(event[5]) == "table" then
-            local payload = event[5]
-            local needSave = false
-
-            if payload.code == 100 then -- 主机上线
-                runData.serverOnline = true
-                needSave = true
-            elseif payload.code == 101 then -- 主机离线
-                runData.serverOnline = false
-                needSave = true
-            elseif payload.code == 102 then -- 主机同步mid表
-                local idMap = type(payload.data) == "table" and payload.data or {}
-                local newId = idMap[staticCfg.tag]
-                if newId then
-                    runData.serverOnline = true
-                    runData.mid = newId
-                    needSave = true
-                end
-            elseif payload.code == 200 then -- 主机切换状态信号
-                if payload.tag == staticCfg.tag or payload.tag == "ALL" then
-                    if not runData.status then
-                        os.queueEvent("doJob")
-                    end
-                    sendACK(false, payload.mid)
-                end
-            elseif payload.code == 201 then -- 主机状态指定请求
-                if payload.tag == staticCfg.tag then
-                    -- 发送 NCK 包，计时器任务不允许 201 状态码
-                    modem.transmit(staticCfg.serverId, staticCfg.serverId, {
-                        code = 104,
-                        mid = payload.mid,
-                    })
-                end
-            elseif payload.code == 202 then -- 主机禁用状态请求
-                if payload.tag == staticCfg.tag or payload.tag == "ALL" then
-                    if hardDisabled then
-                        -- 硬禁用激活: 拦截所有软控制指令返回 NCK 104
-                        modem.transmit(staticCfg.serverId, staticCfg.serverId, {
-                            code = 104,
-                            mid = payload.mid,
-                        })
-                    else
-                        if runData.disabled ~= payload.data.status then
-                            runData.disabled = payload.data.status
-                        end
-                        -- 发送 ACK 确认
-                        sendACK(false, payload.mid)
-                    end
-                end
-            elseif payload.code == 203 then -- 主机单元告警状态触发
-                if payload.tag == staticCfg.tag then
-                    doTrigger(runData, payload.data.tag, payload.data.status)
-                end
-            elseif type(eventMap["modem_message"]) == "function" then -- 自定义函数调用
-                eventMap["modem_message"](runData, event)
+        if eventName == "monitor_touch" then
+            if not runData.status and not hardDisabled and not runData.disabled then
+                os.queueEvent("doJob")
             end
-
-            if needSave then saveConfig() end
-        elseif eventName == "redstone" and sideMap[staticCfg.input] then
-            hardDisabled = sideMap[staticCfg.input] and redstone.getInput(sideMap[staticCfg.input]) or false
-            if hardDisabled ~= hardDisabled then
-                hardDisabled = hardDisabled
+        elseif eventName == "modem_message" and event[4] == staticCfg.serverId and type(event[5]) == "table" then
+            handleServerMessage(event[5], event)
+        elseif eventName == "redstone" and SIDES[staticCfg.input] then
+            local newHard = readHardDisabled()
+            if newHard ~= hardDisabled then
+                hardDisabled = newHard
                 showStatus()
             end
-        elseif type(eventMap["modem_message"]) == "function" then -- 自定义函数调用
-            eventMap["modem_message"](runData, event)
+        else
+            fireHook(eventName, event)
         end
     end
 end
@@ -201,31 +206,30 @@ local function timerJob()
             if runData.passedMin >= staticCfg.waitTime then
                 runData.passedMin = 0
                 saveConfig()
-                if not runData.status then
-                    os.queueEvent("doJob")
-                end
+                os.queueEvent("doJob")
             end
         end
     end
 end
 
---- 配置校验与初始化
+--- 校验并生成运行时配置
 local function configGen()
     -- 加载用户脚本
     local ok, userdata = pcall(require, "user")
-    if not ok then error("User script load error!", 2) end
+    if not ok then error("User script load error: " .. tostring(userdata), 2) end
+
     -- 基础配置段
-    if type(userdata.staticCfg) == "table" then
-        staticCfg = userdata.staticCfg
-    else
+    if type(userdata.staticCfg) ~= "table" then
         error("User script format error: 'staticCfg' not a table!", 2)
     end
+    staticCfg = userdata.staticCfg
+
     -- 控制函数
-    if type(userdata.doControl) == "function" then
-        doControl = userdata.doControl
-    else
+    if type(userdata.doControl) ~= "function" then
         error("User script format error 'doControl' not a function!", 2)
     end
+    doControl = userdata.doControl
+
     -- 恢复函数
     if type(userdata.doRecovery) == "function" then
         doRecovery = userdata.doRecovery
@@ -239,7 +243,21 @@ local function configGen()
         eventMap = userdata.eventMap
     end
 
-    -- 运行时配置校验
+    -- 静态配置校验
+    if type(staticCfg.tag) ~= "string" or staticCfg.tag == "" then
+        error("Tag configuration error", 2)
+    end
+    if type(staticCfg.serverId) ~= "number" or staticCfg.serverId < 0 or staticCfg.serverId > 65535 then
+        error("ServerId configuration error", 2)
+    end
+    if type(staticCfg.waitTime) ~= "number" or staticCfg.waitTime < 1 then
+        error("WaitTime configuration error (must be >= 1 minute)", 2)
+    end
+    if staticCfg.input ~= nil and (type(staticCfg.input) ~= "number" or not SIDES[staticCfg.input]) then
+        error("Input side configuration error", 2)
+    end
+
+    -- 运行时配置校验 (软禁用状态会跨重启保留)
     runData.disabled = not not runData.disabled
     runData.serverOnline = not not runData.serverOnline
     runData.status = not not runData.status
@@ -248,12 +266,12 @@ local function configGen()
     end
 
     -- 硬件禁用逻辑
-    hardDisabled = sideMap[staticCfg.input] and redstone.getInput(sideMap[staticCfg.input]) or false
+    hardDisabled = readHardDisabled()
 
     -- 配置输出
     print("Cell tag: " .. staticCfg.tag)
     print("Server ID: " .. staticCfg.serverId)
-    print("Input side: " .. sideMap[staticCfg.input])
+    print("Input side: " .. tostring(SIDES[staticCfg.input]))
     print("Interval: " .. staticCfg.waitTime)
     term.setTextColor(colors.lightBlue)
     print("Computer ID: " .. os.getComputerID())
@@ -264,6 +282,7 @@ end
 configGen()
 modem.open(staticCfg.serverId)
 if runData.status then
+    -- 上次运行被中断, 恢复现场
     runData.status = false
     doRecovery(runData)
 end

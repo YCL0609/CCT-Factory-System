@@ -1,0 +1,19 @@
+local init = require("init")
+
+-- 不带.lua后缀
+local disabled = {
+    -- "HttpReport",
+    -- "AlertTrigger"
+}
+
+-- 调试模式码
+local dbgMode = 0
+-- local dbgMode = 5891
+
+-- 初始化并运行主程序
+init:new({
+    disabledUnits = disabled,
+    debugMode = dbgMode,
+    -- logFileSize = 100 * 1024, -- 单个日志文件最大字节数 (-1 表示不限制)
+    -- logFileCount = 3,         -- 日志文件总数, 含 .log (0 禁用文件输出, -1 不限制归档数量)
+}):doMainLoop()

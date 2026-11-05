@@ -1,12 +1,12 @@
 [
     {
         "name": "AEMonitor",
-        "desc": "aaaaaaaaaaaaa",
+        "desc": "AE2 存储监控: 显示配置内物品/流体的储量与变化趋势",
         "css": true
     },
     {
         "name": "UnitStatus",
-        "desc": "bbbbbbbbbbbb",
-        "css": false
+        "desc": "工厂单元状态: 查看各生产单元运行状态并远程切换",
+        "css": true
     }
 ]

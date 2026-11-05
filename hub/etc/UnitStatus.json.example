@@ -1,0 +1,65 @@
+{
+    "monitor": {
+        "name": "monitor_2",
+        "minWidth": 50,
+        "minHeight": 5
+    },
+    "list": [
+        {
+            "name": "Carpet production",
+            "tag": "light_blue_carpet_production"
+        },
+        {
+            "name": "Lava production",
+            "tag": "lava_production"
+        },
+        {
+            "name": "Mana fluid production",
+            "tag": "mana_production"
+        },
+        {
+            "name": "Certus quartz production",
+            "tag": "certus_quartz_production"
+        },
+        {
+            "name": "Quartz production",
+            "tag": "quartz_production"
+        },
+        {
+            "name": "Blaze Cake production",
+            "tag": "blaze_cake_production"
+        },
+        {
+            "name": "Cinder Flour production",
+            "tag": "cinder_flour_production"
+        },
+        {
+            "name": "Sugarcane production",
+            "tag": "sugarcane_production"
+        },
+        {
+            "name": "Bamboo production",
+            "tag": "bamboo_production"
+        },
+        {
+            "name": "Nuclear Fuel production",
+            "tag": "nuclear_fuel_production"
+        },
+        {
+            "name": "Moss production line",
+            "tag": "moss_line"
+        },
+        {
+            "name": "Electrolyzing water",
+            "tag": "electrolyzing_water"
+        },
+        {
+            "name": "Orechid Automation",
+            "tag": "orechid_auto"
+        },
+        {
+            "name": "Farm 0",
+            "tag": "farm_0"
+        }
+    ]
+}

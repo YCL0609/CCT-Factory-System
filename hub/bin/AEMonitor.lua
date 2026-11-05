@@ -1,19 +1,34 @@
-local formatAmount = require("../lib.formatAmount")
+local formatAmount = require("lib.formatAmount")
 
---- AE监控类
+--- AE 存储监控类
+--- * 在监视器上分页展示指定物品/流体的储量与趋势
+--- * 依赖 Advanced Peripherals 的 meBridge 外设
 --- @class AEMonitor
 --- @field _monitor table 监视器相关信息
 --- @field _maxNameSize number 名称最大长度
---- @field _dataStart number 数据起始位置
 --- @field _page table 分页相关信息
 --- @field _meBridge table ME 桥接器对象
---- @field _AECache { items:table, fluids:table } me数据缓存对象
+--- @field _wanted {items:table<string,table>,fluids:table<string,table>} 需要采集的条目集合
+--- @field _AECache {items:table,fluids:table} me数据缓存对象
+--- @field _offline boolean ME 桥接器当前是否不可用
 local AEMonitor = {}
 AEMonitor.__index = AEMonitor
 
+--- 数值列宽度
+AEMonitor.VALUE_WIDTH = 13
+
+--- 提示信息
+AEMonitor.INFOTEXT = {
+    PREV = "< Last",
+    NEXT = "Next >",
+    TITLE = "AE2 STORAGE MONITOR",
+    SUBTITLE_RES = " Resource",
+    SUBTITLE_AMOUNT = "Amount "
+}
+
 --- 初始化AE监控类
 --- @param config table 配置参数
---- @param libs {log:Log, net:MiniNet} 依赖库集合
+--- @param libs {log:Log, net:MiniNet, root:string} 依赖库集合
 --- @return AEMonitor
 function AEMonitor:new(config, libs)
     if
@@ -25,14 +40,18 @@ function AEMonitor:new(config, libs)
     then
         error("Config file format error!", 2)
     end
+    if type(config.monitor.name) ~= "string" then
+        error("Config file format error: monitor.name is missing!", 2)
+    end
 
     -- 初始化屏幕
     local monitor = peripheral.wrap(config.monitor.name)
-    if not monitor or peripheral.getType(config.monitor.name) ~= "monitor" then
+    if type(monitor) ~= "table" or peripheral.getType(config.monitor.name) ~= "monitor" then
         error("Monitor not found on: " .. config.monitor.name, 2)
     end
     monitor.setTextScale(1)
-    local w, h = monitor.getSize()
+    local wRaw, hRaw = monitor.getSize()
+    local w, h = tonumber(wRaw) or 0, tonumber(hRaw) or 0
     if w < config.monitor.minWidth or h < config.monitor.minHeight then
         error(string.format(
             "Monitor too small, minimum %dx%d current %dx%d",
@@ -43,28 +62,43 @@ function AEMonitor:new(config, libs)
         ), 2)
     end
 
-    -- 初始化meBridge
-    local me = peripheral.find("meBridge")
-    if not me then
+    -- 初始化 meBridge (兼容 1.21.1 起的新外设名 me_bridge)
+    local me
+    for _, name in ipairs({ "meBridge", "me_bridge" }) do
+        me = peripheral.find(name)
+        if me then break end
+    end
+    if type(me) ~= "table" then
         error("meBridge terminal not found!", 2)
     end
 
     -- 创建对象
     local obj = setmetatable({
-        _maxNameSize = math.modf(w * 0.6),
-        _dataStart = w - 12,
+        _libs = libs,
         _meBridge = me,
+        _offline = false,
         -- 显示器相关
         _monitor = {
             obj = monitor,
+            name = config.monitor.name,
+            minWidth = config.monitor.minWidth,
+            minHeight = config.monitor.minHeight,
             w = w,
             h = h
         },
+        _maxNameSize = 1,
         -- 分页管理相关
         _page = {
-            list = self._filterConfig(config.list or {}, h - 4, libs.log),
+            size = 1,
+            source = {},
+            list = {},
             index = 1,
             change = true
+        },
+        -- 需要采集的条目集合
+        _wanted = {
+            items = {},
+            fluids = {}
         },
         -- 缓存相关
         _AECache = {
@@ -72,6 +106,11 @@ function AEMonitor:new(config, libs)
             fluids = {}
         }
     }, self)
+
+    -- 配置过滤和布局计算
+    obj._wanted, obj._page.source = obj:_filterConfig(config.list)
+    obj:_applyLayout()
+    obj:_repage()
 
     -- 绘制标头
     obj:_drawHeader()
@@ -81,119 +120,135 @@ end
 
 --- 配置过滤
 --- @param data table 待过滤的原始配置
---- @param count number 每个页面包含的条目计数
---- @param log Log 日志实例
---- @return table cleanCfg 已过滤的配置
-function AEMonitor._filterConfig(data, count, log)
-    local cleanCfg = {}
-    local mainIndex = 1
-    local cellIndex = 1
+--- @return {items:table<string,table>,fluids:table<string,table>} wanted 已过滤的根据类型分类的列表
+--- @return table<number,table> flat 已过滤的条目完整列表
+function AEMonitor:_filterConfig(data)
+    local wanted = { items = {}, fluids = {} }
+    local flat = {}
+
     for i, e in ipairs(data) do
-        local valid = true
-        -- 检查本体
-        if type(e) ~= "table" then valid = false end
-        -- 检查 id
-        if type(e.id) ~= "string" then valid = false end
-        -- 检查 name
-        if type(e.name) ~= "string" then valid = false end
-        -- 检查 unit
-        if type(e.unit) ~= "string" then valid = false end
-        -- 检查 type
-        if e.type ~= "fluid" and e.type ~= "item" then valid = false end
+        local valid = type(e) == "table"
+            and type(e.id) == "string"
+            and type(e.name) == "string"
+            and type(e.unit) == "string"
+            and (e.type == "fluid" or e.type == "item")
 
-        -- 插入表
         if valid then
-            if not cleanCfg[mainIndex] then
-                cleanCfg[mainIndex] = {}
-            end
-
-            cleanCfg[mainIndex][cellIndex] = {
+            local cell = {
                 id = e.id,
                 name = e.name,
                 unit = e.unit,
-                type = e.type
+                type = e.type,
             }
-
-            if cellIndex >= count then
-                cellIndex = 1
-                mainIndex = mainIndex + 1
+            flat[#flat + 1] = cell
+            if e.type == "fluid" then
+                wanted.fluids[e.id] = cell
             else
-                cellIndex = cellIndex + 1
+                wanted.items[e.id] = cell
             end
         else
-            log:warn("[AEMonitor] Configuration for index", i, "is not compliant, skipping")
+            self._libs.log:warn("[AEMonitor] Configuration for index", i, "is not compliant, skipping")
         end
     end
 
-    return cleanCfg
+    return wanted, flat
+end
+
+--- 根据当前监视器尺寸计算排版参数
+function AEMonitor:_applyLayout()
+    local w, h = self._monitor.w, self._monitor.h
+    -- 名称列最多占用 60% 宽度, 数值列固定宽度
+    self._maxNameSize = math.max(4, math.min(w - self.VALUE_WIDTH - 1, math.floor(w * 0.6)))
+    -- 可渲染行数: 去掉表头与底部分页栏
+    self._page.size = math.max(1, h - 3 - 1)
+end
+
+--- 按当前页容量重新分页
+function AEMonitor:_repage()
+    local source = self._page.source
+    local size = self._page.size
+    local list = {}
+    local page
+    for i = 1, #source do
+        if (i - 1) % size == 0 then
+            page = {}
+            list[#list + 1] = page
+        end
+        page[#page + 1] = source[i]
+    end
+    self._page.list = list
+    if #list == 0 then
+        self._page.index = 1
+    else
+        self._page.index = math.min(math.max(self._page.index, 1), #list)
+    end
+    self._page.change = true
 end
 
 --- 绘制表头
 function AEMonitor:_drawHeader()
-    self._monitor.obj.setBackgroundColor(colors.black)
-    self._monitor.obj.clear()
+    local monitor = self._monitor.obj
+    local w = self._monitor.w
+
+    monitor.setBackgroundColor(colors.black)
+    monitor.setTextColor(colors.white)
+    monitor.clear()
 
     -- 第一行：标题居中
-    self._monitor.obj.setCursorPos(1, 1)
-    self._monitor.obj.setBackgroundColor(colors.cyan)
-    self._monitor.obj.setTextColor(colors.black)
-    self._monitor.obj.clearLine()
-    local title = "AE2 STORAGE MONITOR"
-    self._monitor.obj.setCursorPos(math.floor((self._monitor.w - #title) / 2) + 1, 1)
-    self._monitor.obj.write(title)
-    self._monitor.obj.setBackgroundColor(colors.black)
-    self._monitor.obj.setTextColor(colors.white)
+    local title = AEMonitor.INFOTEXT.TITLE
+    if #title > w then title = title:sub(1, w) end
+    monitor.setCursorPos(1, 1)
+    monitor.setBackgroundColor(colors.cyan)
+    monitor.setTextColor(colors.black)
+    monitor.clearLine()
+    monitor.setCursorPos(math.floor((w - #title) / 2) + 1, 1)
+    monitor.write(title)
 
     -- 第二行：列标题
-    self._monitor.obj.setCursorPos(1, 2)
-    self._monitor.obj.write(" Resource")
-    local rightHead = "Amount "
-    self._monitor.obj.setCursorPos(self._monitor.w - #rightHead + 1, 2)
-    self._monitor.obj.write(rightHead)
+    monitor.setBackgroundColor(colors.black)
+    monitor.setTextColor(colors.white)
+    monitor.setCursorPos(1, 2)
+    monitor.write(AEMonitor.INFOTEXT.SUBTITLE_RES)
+    monitor.setCursorPos(math.max(1, w - #AEMonitor.INFOTEXT.SUBTITLE_AMOUNT + 1), 2)
+    monitor.write(AEMonitor.INFOTEXT.SUBTITLE_AMOUNT)
 
     -- 第三行：分隔线
-    self._monitor.obj.setCursorPos(1, 3)
-    self._monitor.obj.write(string.rep("-", self._monitor.w))
+    monitor.setCursorPos(1, 3)
+    monitor.write(string.rep("-", w))
 end
 
 --- 绘制分页管理
 function AEMonitor:_drawPageBar()
-    if not self._page.change or #self._page.list == 1 then return end
-    self._monitor.obj.setCursorPos(1, self._monitor.h)
-    self._monitor.obj.setBackgroundColor(colors.black)
-    self._monitor.obj.clearLine()
+    local monitor = self._monitor.obj
+    local w, h = self._monitor.w, self._monitor.h
+    local total = #self._page.list
 
-    -- 预生成按钮颜色
-    local lastBg, nextBg
-    if #self._page.list == 1 then
-        lastBg = colors.lightGray
-        nextBg = colors.lightGray
-    elseif self._page.index == 1 then
-        lastBg = colors.lightGray
-        nextBg = colors.cyan
-    elseif self._page.index == #self._page.list then
-        lastBg = colors.cyan
-        nextBg = colors.lightGray
-    end
+    monitor.setCursorPos(1, h)
+    monitor.setBackgroundColor(colors.black)
+    monitor.setTextColor(colors.white)
+    monitor.clearLine()
+
+    if total <= 1 then return end
+
+    local canPrev = self._page.index > 1
+    local canNext = self._page.index < total
 
     -- 渲染上一页按钮
-    self._monitor.obj.setBackgroundColor(lastBg)
-    self._monitor.obj.setTextColor(colors.black)
-    self._monitor.obj.write("< Last")
+    monitor.setBackgroundColor(canPrev and colors.cyan or colors.lightGray)
+    monitor.setTextColor(colors.black)
+    monitor.write(AEMonitor.INFOTEXT.PREV)
 
     -- 渲染下一页按钮
-    local txt0 = "Next >"
-    self._monitor.obj.setCursorPos(self._monitor.w - #txt0 + 1, self._monitor.h)
-    self._monitor.obj.setBackgroundColor(nextBg)
-    self._monitor.obj.setTextColor(colors.black)
-    self._monitor.obj.write(txt0)
+    monitor.setCursorPos(math.max(1, w - #AEMonitor.INFOTEXT.NEXT + 1), h)
+    monitor.setBackgroundColor(canNext and colors.cyan or colors.lightGray)
+    monitor.write(AEMonitor.INFOTEXT.NEXT)
 
     -- 渲染页数
-    local txt1 = self._page.index .. "/" .. #self._page.list
-    self._monitor.obj.setCursorPos(math.floor((self._monitor.w - #txt1) / 2) + 1, self._monitor.h)
-    self._monitor.obj.setBackgroundColor(colors.black)
-    self._monitor.obj.setTextColor(colors.lightBlue)
-    self._monitor.obj.write(txt1)
+    local pageText = self._page.index .. "/" .. total
+    monitor.setCursorPos(math.floor((w - #pageText) / 2) + 1, h)
+    monitor.setBackgroundColor(colors.black)
+    monitor.setTextColor(colors.lightBlue)
+    monitor.write(pageText)
 end
 
 --- 渲染单行数据
@@ -201,38 +256,41 @@ end
 --- @param name string 资源名称
 --- @param value number 资源数值
 --- @param unit string 资源单位
---- @param trend string 近期趋势
+--- @param trend number 近期趋势 ( 1: up| 0: none | -1: down )
 function AEMonitor:_renderRow(index, name, value, unit, trend)
+    local monitor = self._monitor.obj
     if index > self._monitor.h - 1 or index < 4 then return end
 
     -- 渲染名称
     if self._page.change then
-        self._monitor.obj.setCursorPos(1, index)
-        self._monitor.obj.setTextColor(colors.white)
-        self._monitor.obj.setBackgroundColor(colors.black)
-        self._monitor.obj.clearLine()
+        monitor.setCursorPos(1, index)
+        monitor.setTextColor(colors.white)
+        monitor.setBackgroundColor(colors.black)
+        monitor.clearLine()
         if #name > self._maxNameSize then -- 过长截断
-            name = string.sub(name, 1, self._maxNameSize - 3) .. "..."
+            name = name:sub(1, math.max(0, self._maxNameSize - 3)) .. "..."
         end
-        self._monitor.obj.write(name)
+        monitor.write(name)
     end
 
     -- 预处理趋势相关
     local trendStr = "  "
     local trendColor = colors.lightBlue
-    if trend == "up" then
+    if trend == 1 then
         trendStr = "+ "
         trendColor = colors.green
-    elseif trend == "down" then
+    elseif trend == -1 then
         trendStr = "- "
         trendColor = colors.red
     end
 
-    -- 渲染数量
-    local valStr = string.format("%13s", trendStr .. formatAmount(value) .. " " .. unit)
-    self._monitor.obj.setCursorPos(self._dataStart, index)
-    self._monitor.obj.setTextColor(trendColor)
-    self._monitor.obj.write(valStr)
+    -- 渲染数量 (右对齐到监视器右边)
+    local valueText = trendStr .. formatAmount(value) .. " " .. tostring(unit)
+    local valStr = string.format("%" .. self.VALUE_WIDTH .. "s", valueText)
+    monitor.setCursorPos(math.max(1, self._monitor.w - #valStr + 1), index)
+    monitor.setBackgroundColor(colors.black)
+    monitor.setTextColor(trendColor)
+    monitor.write(valStr)
 end
 
 --- 获取需要注册的事件配置
@@ -240,105 +298,176 @@ function AEMonitor:getEventList()
     return {
         poll = true,
         monitor = true,
-        monitorName = peripheral.getName(self._monitor.obj),
-        other = {}
+        monitorName = self._monitor.name,
+        other = { "monitor_resize" }
     }
+end
+
+--- 从 ME 桥接器采集数据
+--- @return {items:table,fluids:table}
+function AEMonitor:_fetchCache()
+    local newCache = { items = {}, fluids = {} }
+
+    local sources = {
+        { type = "items",  list = "listItems" },
+        { type = "fluids", list = "listFluid" },
+    }
+
+    local offline = false
+    for _, source in ipairs(sources) do
+        local wanted = self._wanted[source.type]
+        -- 没有配置该类型条目时无需查询
+        if next(wanted) then
+            local ok, data = pcall(self._meBridge[source.list])
+            if not ok or type(data) ~= "table" then
+                offline = true
+            else
+                local cache = newCache[source.type]
+                for _, entry in ipairs(data) do
+                    local name = type(entry) == "table" and entry.name or nil
+                    if name and wanted[name] and cache[name] == nil then
+                        cache[name] = entry
+                    end
+                end
+            end
+        end
+    end
+
+    if offline and not self._offline then
+        self._libs.log:warn("[AEMonitor] ME bridge is unreachable, keeping the last known values")
+    elseif not offline and self._offline then
+        self._libs.log:info("[AEMonitor] ME bridge is back online")
+    end
+    self._offline = offline
+
+    return newCache
+end
+
+--- 计算某条目的当前数值 (流体自动折算为桶)
+--- @param cfg table 条目配置
+--- @param cache {items:table,fluids:table} 数据缓存
+--- @return number value
+function AEMonitor._getAmount(cfg, cache)
+    local isFluid = cfg.type == "fluid"
+    local source = isFluid and cache.fluids or cache.items
+    local data = source[cfg.id]
+    local amount = type(data) == "table" and tonumber(data.amount) or nil
+    if not amount then amount = 0 end
+    if isFluid then amount = amount / 1000 end -- 流体转换为桶（B）
+    return amount
 end
 
 --- 定时器触发函数: 刷新显示
 function AEMonitor:poll()
     -- 获取实时数据
-    local rawItems = self._meBridge.listItems() or {}
-    local rawFluids = self._meBridge.listFluid() or {}
-    local newCache = { items = {}, fluids = {} }
-
-    -- 建立id名称索引表
-    for _, data in ipairs(rawItems) do
-        newCache.items[data.name] = data
-    end
-    for _, data in ipairs(rawFluids) do
-        newCache.fluids[data.name] = data
-    end
+    local newCache = self:_fetchCache()
 
     -- 事件发送
     os.queueEvent("ae2_cache_update", newCache)
 
-    -- 渲染分页管理
-    self:_drawPageBar()
-
     -- 遍历配置渲染每一行
     local pageData = self._page.list[self._page.index]
     if type(pageData) ~= "table" then
+        self._page.change = false
         return
+    end
+
+    if self._page.change then
+        -- 清理数据区
+        local monitor = self._monitor.obj
+        monitor.setBackgroundColor(colors.black)
+        monitor.setTextColor(colors.white)
+        for row = 3 + 1, self._monitor.h - 1 do
+            monitor.setCursorPos(1, row)
+            monitor.clearLine()
+        end
+
+        -- 渲染分页管理
+        self:_drawPageBar()
     end
 
     for i, cfg in ipairs(pageData) do
-        local isFluid = cfg.type == "fluid"
-
-        local newSource = isFluid and newCache.fluids or newCache.items
-        local newData = newSource[cfg.id] or {}
-        local newCount = newData.amount or 0
-
-        local oldSource = isFluid and self._AECache.fluids or self._AECache.items
-        local oldData = oldSource[cfg.id] or {}
-        local oldCount = oldData.amount or 0
-
-        -- 流体转换为桶（B）
-        if isFluid then
-            newCount = newCount / 1000
-            oldCount = oldCount / 1000
-        end
+        local newCount = self._getAmount(cfg, newCache)
+        local oldCount = self._getAmount(cfg, self._AECache)
 
         -- 趋势判断
-        local trend = "none"
+        local trend = 0
         if newCount > oldCount then
-            trend = "up"
+            trend = 1  -- up
         elseif newCount < oldCount then
-            trend = "down"
+            trend = -1 -- down
         end
 
-        -- 渲染该行
-        self:_renderRow(
-            i + 3,
-            cfg.name,
-            newCount,
-            cfg.unit,
-            trend
-        )
+        self:_renderRow(i + 3, cfg.name, newCount, cfg.unit, trend)
     end
 
     -- 更新全局缓存
-    self._AECache = {
-        items = newCache.items,
-        fluids = newCache.fluids
-    }
-
-    if self._page.change then self._page.change = false end
+    self._AECache = newCache
+    self._page.change = false
 end
 
---- 事件触发函数: 按钮点击判断
+--- 事件触发函数
 --- @param data table 事件对象
 function AEMonitor:epoll(data)
-    if type(data) ~= "table" or type(data[3]) ~= "number" or type(data[4]) ~= "number" then
+    if type(data) ~= "table" then return end
+
+    -- 显示器缩放事件
+    if data[1] == "monitor_resize" then
+        if data[2] ~= self._monitor.name then return end
+        local wRaw, hRaw = self._monitor.obj.getSize()
+        local w, h = tonumber(wRaw) or 0, tonumber(hRaw) or 0
+        if w == self._monitor.w and h == self._monitor.h then return end
+        if w < self._monitor.minWidth or h < self._monitor.minHeight then
+            local txt = "X Error Too small"
+            local monitor = self._monitor
+
+            monitor.setBackgroundColor(colors.black)
+            monitor.setTextColor(colors.red)
+            monitor.setCursorPos(1, 1)
+            monitor.clear()
+            local wNew = monitor.getSize()
+            if #txt > wNew then
+                local line = 1
+                for i = 1, #txt, wNew do
+                    local sepTxt = string.sub(txt, i, math.min(i + wNew - 1, #txt))
+
+                    monitor.setCursorPos(1, line)
+                    monitor.write(sepTxt)
+                    line = line + 1
+                end
+            else
+                monitor.write(txt)
+            end
+
+            return
+        end
+        self._monitor.w, self._monitor.h = w, h
+        self:_applyLayout()
+        self:_repage()
+        self:_drawHeader()
+        self:poll()
         return
     end
 
-    if #self._page.list == 1 or data[4] ~= self._monitor.h then
-        return
-    end
+    -- 显示器点击事件
+    if data[1] ~= "monitor_touch" then return end
+    local x, y = tonumber(data[3]), tonumber(data[4])
+    if not x or not y or y ~= self._monitor.h then return end
 
-    if self._page.index ~= 1 then -- 判断上一页
-        if data[3] > 0 and data[3] < 6 then
-            self._page.index = self._page.index - 1
-            self._page.change = true
-            self:poll()
-        end
-    elseif self._page.index ~= #self._page.list then -- 判断下一页
-        if data[3] > self._monitor.w - 6 and data[3] < self._monitor.w then
-            self._page.index = self._page.index + 1
-            self._page.change = true
-            self:poll()
-        end
+    local total = #self._page.list
+    if total <= 1 then return end
+
+    local prevWidth = #"< Last"
+    local nextStart = self._monitor.w - #"Next >" + 1
+
+    if x <= prevWidth and self._page.index > 1 then
+        self._page.index = self._page.index - 1
+        self._page.change = true
+        self:poll()
+    elseif x >= nextStart and self._page.index < total then
+        self._page.index = self._page.index + 1
+        self._page.change = true
+        self:poll()
     end
 end
 

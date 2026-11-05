@@ -1,56 +1,49 @@
-.AEM-item {
-    /* width: 100%; */
-    border-radius: 10px;
-    padding: 10px;
-    align-items: center;
-    border-collapse: collapse;
-    border: 2px solid rgb(140 140 140);
-    font-family: sans-serif;
-    font-size: 0.8rem;
-    letter-spacing: 1px;
-    transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
-    margin: auto;
+/* AE2 存储监控模块 */
+.data-table--ae .res-name {
+    max-width: 22ch;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
-.AEM-item thead,
-.AEM-item tfoot {
-    background-color: rgb(228 240 245);
+.data-table--ae tbody tr.unknown .res-name {
+    color: var(--fg-muted);
 }
 
-.AEM-item th,
-.AEM-item td {
-    border: 1px solid rgb(160 160 160);
-    padding: 8px 15px;
+.data-table--ae .num {
+    font-weight: 600;
 }
 
-.AEM-item td:last-of-type {
-    text-align: center;
+/* 趋势: 上升绿色 / 下降橙色 / 持平默认色 / 未知灰色 */
+.data-table--ae .num[data-trend="1"] {
+    color: var(--ok);
 }
 
-.AEM-item tbody>tr:nth-of-type(even) {
-    background-color: rgb(237 238 242);
+.data-table--ae .num[data-trend="-1"] {
+    color: var(--warn);
 }
 
-.AEM-item tbody>tr:nth-of-type(odd) {
-    background-color: #ffffff;
+.data-table--ae .num[data-trend="0"] {
+    color: var(--accent);
 }
 
-.AEM-item tbody>tr:nth-of-type(even) {
-    background-color: #f2f2f2;
+.data-table--ae tr.unknown .num {
+    color: var(--fg-muted);
+    font-weight: 400;
 }
 
-.AEM-item tbody th[data-type] {
-    color: #0dd;
+.data-table--ae .num[data-trend="1"]::before {
+    content: "▲ ";
+    font-size: .7em;
 }
 
-.AEM-item tbody th[data-type="1"] {
-    color: #0d0;
+.data-table--ae .num[data-trend="-1"]::before {
+    content: "▼ ";
+    font-size: .7em;
 }
 
-.AEM-item tbody th[data-type="-1"] {
-    color: #f80;
-}
-
-.AEM-item tbody th[data-type="9"] {
-    color: #d00;
+.data-table--ae .num[data-trend="0"]::before {
+    content: "— ";
+    font-size: .7em;
+    opacity: .6;
 }
